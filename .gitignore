@@ -1,0 +1,51 @@
+# Build output
+build/
+cmake-build-*/
+out/
+
+# MSVC / Visual Studio
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.aps
+*.ncb
+*.opendb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+.vs/
+
+# CLion / JetBrains
+.idea/
+cmake-build-debug/
+cmake-build-release/
+
+# GCC/Clang build artefacts
+*.o
+*.a
+*.so
+*.dylib
+*.d
+
+# Test & benchmark binaries
+chronosx_tests
+chronosx_bench
+chronosx_sim
+
+# Generated files
+compile_commands.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
