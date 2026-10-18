@@ -29,7 +29,7 @@ TEST_F(MatchingEngineTest, LimitSellRestsWhenNoBestBid) {
 }
 
 TEST_F(MatchingEngineTest, LimitBuyBelowBestAskDoesNotMatch) {
-    engine.submit_limit(1, Side::Sell, 1050, 10);
+    (void)engine.submit_limit(1, Side::Sell, 1050, 10);
     auto r = engine.submit_limit(2, Side::Buy, 1040, 10);
     EXPECT_TRUE(r.trades.empty());
     EXPECT_EQ(r.final_status, OrderStatus::New);
@@ -53,10 +53,8 @@ TEST_F(MatchingEngineTest, ExactFillOneSellOneBy) {
 }
 
 TEST_F(MatchingEngineTest, ExecutionAtRestingPrice_MakerPrice) {
-    // Resting ask at 1000, aggressive buy at 1050 — should fill at 1000
-    engine.submit_limit(1, Side::Sell, 1000, 10);
+    (void)engine.submit_limit(1, Side::Sell, 1000, 10);
     auto r = engine.submit_limit(2, Side::Buy, 1050, 10);
-
     ASSERT_EQ(r.trades.size(), 1u);
     EXPECT_EQ(r.trades[0].price, Price{1000});  // maker price
 }
@@ -93,27 +91,27 @@ TEST_F(MatchingEngineTest, RestingOrderPartiallyFilled) {
 // ============================================================
 
 TEST_F(MatchingEngineTest, BuySweepsMultipleAskLevels) {
-    engine.submit_limit(10, Side::Sell, 1000, 20);
-    engine.submit_limit(11, Side::Sell, 1010, 20);
-    engine.submit_limit(12, Side::Sell, 1020, 20);
+    (void)engine.submit_limit(10, Side::Sell, 1000, 20);
+    (void)engine.submit_limit(11, Side::Sell, 1010, 20);
+    (void)engine.submit_limit(12, Side::Sell, 1020, 20);
 
+    // Buy 55 across 3 levels of 20: fills 20 + 20 + 15 = 55 total → Filled
     auto r = engine.submit_limit(20, Side::Buy, 1020, 55);
 
     ASSERT_EQ(r.trades.size(), 3u);
     EXPECT_EQ(r.trades[0].price, Price{1000});
+    EXPECT_EQ(r.trades[0].qty,   Quantity{20});
     EXPECT_EQ(r.trades[1].price, Price{1010});
+    EXPECT_EQ(r.trades[1].qty,   Quantity{20});
     EXPECT_EQ(r.trades[2].price, Price{1020});
     EXPECT_EQ(r.trades[2].qty,   Quantity{15});  // partial on last level
-    EXPECT_EQ(r.final_status, OrderStatus::PartiallyFilled);
+    EXPECT_EQ(r.final_status, OrderStatus::Filled); // 20+20+15 = 55 = full qty
 }
 
 TEST_F(MatchingEngineTest, FIFOWithinPriceLevel) {
-    // Two resting sells at same price; buy should fill order 1 first
-    engine.submit_limit(1, Side::Sell, 1000, 10);
-    engine.submit_limit(2, Side::Sell, 1000, 10);
-
+    (void)engine.submit_limit(1, Side::Sell, 1000, 10);
+    (void)engine.submit_limit(2, Side::Sell, 1000, 10);
     auto r = engine.submit_limit(3, Side::Buy, 1000, 15);
-
     ASSERT_GE(r.trades.size(), 1u);
     EXPECT_EQ(r.trades[0].resting_id, OrderId{1});  // FIFO: first in
 }
@@ -170,11 +168,10 @@ TEST_F(MatchingEngineTest, CancelNonExistentOrder) {
 }
 
 TEST_F(MatchingEngineTest, CancelThenMatchDoesNotUseRemovedOrder) {
-    engine.submit_limit(1, Side::Sell, 1000, 50);
-    engine.cancel_order(1);
-
+    (void)engine.submit_limit(1, Side::Sell, 1000, 50);
+    (void)engine.cancel_order(1);
     auto r = engine.submit_limit(2, Side::Buy, 1000, 50);
-    EXPECT_TRUE(r.trades.empty());  // Nothing to match against
+    EXPECT_TRUE(r.trades.empty());
     EXPECT_EQ(r.final_status, OrderStatus::New);
 }
 
@@ -183,20 +180,15 @@ TEST_F(MatchingEngineTest, CancelThenMatchDoesNotUseRemovedOrder) {
 // ============================================================
 
 TEST_F(MatchingEngineTest, NoCrossedBookAfterMatch) {
-    engine.submit_limit(1, Side::Sell, 1000, 20);
-    engine.submit_limit(2, Side::Buy,  1000, 30);
-
-    // After partial match, bid should remain
+    (void)engine.submit_limit(1, Side::Sell, 1000, 20);
+    (void)engine.submit_limit(2, Side::Buy,  1000, 30);
     auto bb = engine.book().best_bid();
     auto ba = engine.book().best_ask();
-
-    if (bb && ba) {
-        EXPECT_LT(*bb, *ba);  // no crossed book
-    }
+    if (bb && ba) { EXPECT_LT(*bb, *ba); }
 }
 
 TEST_F(MatchingEngineTest, SeqCounterMonotonicallyIncreases) {
     uint64_t before = engine.seq_counter();
-    engine.submit_limit(1, Side::Buy, 1000, 10);
+    (void)engine.submit_limit(1, Side::Buy, 1000, 10);
     EXPECT_GT(engine.seq_counter(), before);
 }

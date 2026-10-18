@@ -51,7 +51,7 @@ struct alignas(64) Order {
 
     OrderType   type         {OrderType::Limit};
     Side        side         {Side::Buy};
-    OrderStatus status       {OrderStatus::New};
+    OrderStatus status       {OrderStatus::Rejected}; // Unallocated slots are NOT active
 
 private:
     // Explicit padding to guarantee 64-byte size on all targets.

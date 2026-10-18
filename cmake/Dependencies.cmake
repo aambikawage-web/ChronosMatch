@@ -21,7 +21,12 @@ if(BUILD_BENCHMARKS)
         URL https://github.com/google/benchmark/archive/refs/tags/v1.9.0.zip
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
-    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_TESTING  OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL  OFF CACHE BOOL "" FORCE)
+    # Disable -Werror inside Benchmark's own sources (sysinfo.cc has
+    # an unhandled enum case on Windows with GCC 16 that triggers -Wswitch).
+    set(BENCHMARK_ENABLE_WERROR   OFF CACHE BOOL "" FORCE)
+    # Also suppress Benchmark's own extra pedantic flags on GCC
+    set(BENCHMARK_USE_LIBCXX      OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googlebenchmark)
 endif()
