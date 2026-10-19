@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
-ChronosX — HFT Matching Engine Simulator (Python)
+ChronosX -- HFT Matching Engine Simulator (Python)
 Entry point: runs 5 demonstration scenarios then an SPSC throughput benchmark.
 """
+import sys, io
+# Ensure UTF-8 output on Windows terminals
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 
 from chronosx import (
     Side, OrderType, OrderStatus, PRICE_MULT,
@@ -86,10 +91,10 @@ def scenario_5() -> None:
 
 
 def main() -> None:
-    print("╔══════════════════════════════════════════════════╗")
-    print("║   ChronosX — HFT Matching Engine Simulator      ║")
-    print("║              Python Edition                      ║")
-    print("╚══════════════════════════════════════════════════╝")
+    print("=" * 52)
+    print("   ChronosX -- HFT Matching Engine Simulator")
+    print("              Python Edition")
+    print("=" * 52)
 
     sim = Simulator()
     scenario_1(sim)
