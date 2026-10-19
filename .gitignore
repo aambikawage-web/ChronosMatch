@@ -228,3 +228,5 @@ __marimo__/
 .env
 .env.*
 !.env.example
+upstox_sandbox_test.py
+.env

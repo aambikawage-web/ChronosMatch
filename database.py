@@ -96,6 +96,19 @@ def update_order_remaining(order_id, remaining_quantity):
         """, (remaining_quantity, status, order_id))
 
 
+def cancel_order_in_db(order_id):
+    with connect() as conn:
+        cursor = conn.execute("""
+            UPDATE orders
+            SET status = 'CANCELLED'
+            WHERE id = ?
+              AND status IN ('OPEN', 'PARTIAL')
+              AND remaining_quantity > 0
+        """, (order_id,))
+
+        return cursor.rowcount > 0
+
+
 def save_trade(trade):
     with connect() as conn:
         conn.execute("""
@@ -136,9 +149,10 @@ def get_all_orders():
         """).fetchall()
 
     columns = [
-        "id", "side", "price", "quantity",
-        "remaining_quantity", "status"
+        "id", "side", "price",
+        "quantity", "remaining_quantity", "status"
     ]
+
     return [dict(zip(columns, row)) for row in rows]
 
 
@@ -151,8 +165,8 @@ def get_all_trades():
         """).fetchall()
 
     return [
-        {"id": r[0], "price": r[1], "quantity": r[2]}
-        for r in rows
+        {"id": row[0], "price": row[1], "quantity": row[2]}
+        for row in rows
     ]
 
 
