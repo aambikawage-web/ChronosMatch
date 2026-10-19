@@ -50,3 +50,4 @@ python -m unittest -v test_chronosmatch.py
 
 ## Disclaimer
 This project is an educational trading simulation. It is not intended for live trading or financial advice.
+Documentation updated: October 19, 2026.
