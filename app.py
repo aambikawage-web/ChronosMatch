@@ -1,665 +1,760 @@
-import streamlit as st
+
+import random
+import sqlite3
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
-from database import create_tables, get_active_orders, get_all_orders, get_all_trades
-from chronosmatch import ChronosMatch
+import streamlit as st
+from streamlit_autorefresh import st_autorefresh
+
+
+# =========================================================
+# CHRONOSMATCH — PROFESSIONAL HFT SIMULATION TERMINAL
+# =========================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "chronosmatch_simulation.db"
+
+REFRESH_MS = 2000
+MAX_ROWS = 500
+SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA"]
 
 st.set_page_config(
-    page_title="ChronosMatch | Trading Terminal",
-    page_icon="📈",
+    page_title="ChronosMatch | HFT Terminal",
+    page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
-
-:root {
-    --bg: #202442;
-    --panel: #252a4c;
-    --panel2: #1d223f;
-    --line: #3a426b;
-    --text: #e2e7fb;
-    --muted: #9ba7cc;
-    --green: #16b981;
-    --red: #ef5365;
-}
-
-.stApp {
-    background: var(--bg);
-    color: var(--text);
-    font-family: Inter, sans-serif;
-}
-
-[data-testid="stHeader"] {
-    background: #202442;
-}
-
-.block-container {
-    padding: 1rem 1rem 1rem;
-    max-width: 100%;
-}
-
-h1, h2, h3, h4, p, label {
-    color: var(--text);
-}
-
-[data-testid="stSidebar"] {
-    background: #191d37;
-    border-right: 1px solid var(--line);
-}
-
-[data-testid="stMetric"] {
-    background: var(--panel2);
-    border: 1px solid var(--line);
-    padding: 9px 12px;
-    border-radius: 5px;
-}
-
-[data-testid="stMetricLabel"] {
-    color: var(--muted);
-}
-
-[data-testid="stMetricValue"] {
-    font-family: 'IBM Plex Mono', monospace;
-}
-
-[data-testid="stDataFrame"] {
-    border: 1px solid var(--line);
-    border-radius: 4px;
-}
-
-.stButton button, .stFormSubmitButton button {
-    border-radius: 4px;
-    border: 1px solid var(--line);
-    font-weight: 700;
-}
-
-div[data-testid="stForm"] {
-    background: var(--panel2);
-    border: 1px solid var(--line);
-    padding: 12px;
-    border-radius: 5px;
-}
-
-.terminalbar {
-    background: #191d37;
-    border: 1px solid var(--line);
-    padding: 8px 12px;
-    margin-bottom: 8px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-}
-
-.brand {
-    font-size: 20px;
-    font-weight: 800;
-    letter-spacing: -.5px;
-}
-
-.brand span {
-    color: #8da4ff;
-}
-
-.topmeta {
-    font: 11px 'IBM Plex Mono', monospace;
-    color: #c5ccec;
-    text-align: right;
-}
-
-.panelhead {
-    background: #2a3055;
-    border: 1px solid var(--line);
-    padding: 7px 10px;
-    font-size: 12px;
-    font-weight: 700;
-    margin-bottom: 0;
-}
-
-.panelbody {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    padding: 8px;
-    margin-bottom: 8px;
-}
-
-.smallnote {
-    font-size: 11px;
-    color: var(--muted);
-}
-
-div[data-testid="stPlotlyChart"] {
-    background: var(--panel);
-    border: 1px solid var(--line);
-}
-</style>
-""", unsafe_allow_html=True)
-
-create_tables()
-engine = ChronosMatch()
+st_autorefresh(interval=REFRESH_MS, key="hft_auto_refresh")
 
 
-def num(value, default=0.0):
-    try:
-        return float(value) if value is not None else default
-    except (TypeError, ValueError):
-        return default
+# =========================================================
+# STYLE
+# =========================================================
+
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background: #080c12;
+        color: #d9e2ef;
+    }
+
+    [data-testid="stSidebar"] {
+        background: #0c131d;
+        border-right: 1px solid #263445;
+    }
+
+    .terminal-header {
+        background: linear-gradient(120deg, #101d2b, #0a111a);
+        border: 1px solid #263b4e;
+        border-radius: 12px;
+        padding: 22px 25px;
+        margin-bottom: 18px;
+    }
+
+    .brand {
+        color: #61f5c6;
+        font-size: 28px;
+        font-weight: 850;
+        letter-spacing: 2px;
+    }
+
+    .brand span {
+        color: #e1eaf5;
+    }
+
+    .subtitle {
+        color: #8398ae;
+        font-size: 11px;
+        letter-spacing: 1.8px;
+        margin-top: 7px;
+    }
+
+    .engine-status {
+        color: #61f5c6;
+        font-size: 13px;
+        font-weight: bold;
+    }
+
+    .section-label {
+        color: #8fa5bd;
+        font-size: 11px;
+        letter-spacing: 1.7px;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+
+    .panel {
+        background: #0e1722;
+        border: 1px solid #243447;
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 12px;
+    }
+
+    .small-note {
+        color: #8296aa;
+        font-size: 12px;
+    }
+
+    div[data-testid="stMetric"] {
+        background: #0e1722;
+        border: 1px solid #243447;
+        padding: 14px;
+        border-radius: 10px;
+    }
+
+    div[data-testid="stMetricLabel"] {
+        color: #91a6bb;
+    }
+
+    div[data-testid="stMetricValue"] {
+        color: #61f5c6;
+    }
+
+    h1, h2, h3 {
+        color: #e1eaf5;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        color: #a8b9cc;
+    }
+
+    [data-testid="stDataFrame"] {
+        border: 1px solid #243447;
+        border-radius: 8px;
+    }
+
+    .footer {
+        border-top: 1px solid #243447;
+        margin-top: 25px;
+        padding-top: 15px;
+        text-align: center;
+        color: #71869b;
+        font-size: 11px;
+        letter-spacing: 1px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
-def qty(order):
-    return max(
-        0,
-        int(num(order.get(
-            "remaining_quantity",
-            order.get("quantity", 0)
-        )))
+# =========================================================
+# DATABASE — SEPARATE SIMULATION TABLES
+# Existing chronosmatch.db is left untouched.
+# =========================================================
+
+def connect_db():
+    return sqlite3.connect(DB_PATH, timeout=10)
+
+
+def init_db():
+    with connect_db() as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS sim_orders (
+                order_id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                price REAL NOT NULL,
+                quantity INTEGER NOT NULL,
+                filled_quantity INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                latency_us REAL NOT NULL
+            )
+        """)
+
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS sim_trades (
+                trade_id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                price REAL NOT NULL,
+                quantity INTEGER NOT NULL,
+                buy_order_id TEXT NOT NULL,
+                sell_order_id TEXT NOT NULL,
+                latency_us REAL NOT NULL
+            )
+        """)
+
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS sim_state (
+                symbol TEXT PRIMARY KEY,
+                last_price REAL NOT NULL
+            )
+        """)
+
+        for symbol, price in {
+            "AAPL": 225.00,
+            "MSFT": 510.00,
+            "NVDA": 180.00,
+            "TSLA": 340.00,
+        }.items():
+            con.execute(
+                "INSERT OR IGNORE INTO sim_state VALUES (?, ?)",
+                (symbol, price),
+            )
+
+
+def load_table(table_name):
+    # Only call with the fixed internal table names below.
+    allowed = {"sim_orders", "sim_trades", "sim_state"}
+    if table_name not in allowed:
+        raise ValueError("Unknown table")
+
+    with connect_db() as con:
+        return pd.read_sql_query(
+            f"SELECT * FROM {table_name}",
+            con,
+        )
+
+
+def get_last_price(symbol):
+    with connect_db() as con:
+        row = con.execute(
+            "SELECT last_price FROM sim_state WHERE symbol = ?",
+            (symbol,),
+        ).fetchone()
+
+    return float(row[0]) if row else 100.0
+
+
+def save_last_price(symbol, price):
+    with connect_db() as con:
+        con.execute(
+            """
+            INSERT INTO sim_state(symbol, last_price)
+            VALUES (?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET last_price = excluded.last_price
+            """,
+            (symbol, price),
+        )
+
+
+# =========================================================
+# SIMULATED MATCHING ENGINE
+# =========================================================
+
+def simulate_market_event(symbol):
+    """
+    Generate one synthetic order. A crossing order is matched
+    against a resting opposite-side order for the same symbol.
+    No broker or exchange is contacted.
+    """
+    start_ns = time.perf_counter_ns()
+    now = datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+    reference_price = get_last_price(symbol)
+
+    # Synthetic price movement, intentionally small.
+    reference_price = max(
+        1.0,
+        reference_price + random.choice([-1, -0.5, 0, 0.5, 1])
     )
 
+    side = random.choice(["BUY", "SELL"])
+    quantity = random.randint(1, 25)
 
-def price(value):
-    return "—" if value is None else f"{num(value):,.2f}"
+    # Random limit price around the reference.
+    offset = random.choice([-1.0, -0.5, 0.0, 0.5, 1.0])
+    price = round(reference_price + offset, 2)
+
+    order_id = "ORD-" + uuid.uuid4().hex[:10].upper()
+    status = "OPEN"
+    filled_quantity = 0
+    trades_created = []
+
+    with connect_db() as con:
+        # Look for an opposite-side resting order that can match.
+        opposite_side = "SELL" if side == "BUY" else "BUY"
+
+        if side == "BUY":
+            crossing_condition = "price <= ?"
+            price_order = "price ASC, timestamp ASC"
+        else:
+            crossing_condition = "price >= ?"
+            price_order = "price DESC, timestamp ASC"
+
+        candidates = con.execute(
+            f"""
+            SELECT order_id, price, quantity, filled_quantity
+            FROM sim_orders
+            WHERE symbol = ?
+              AND side = ?
+              AND status IN ('OPEN', 'PARTIAL')
+              AND {crossing_condition}
+            ORDER BY {price_order}
+            LIMIT 10
+            """,
+            (symbol, opposite_side, price),
+        ).fetchall()
+
+        remaining = quantity
+
+        for resting_id, resting_price, resting_qty, resting_filled in candidates:
+            available = int(resting_qty) - int(resting_filled)
+            if available <= 0:
+                continue
+
+            matched_qty = min(remaining, available)
+            remaining -= matched_qty
+            filled_quantity += matched_qty
+
+            # Trade occurs at the resting order's price.
+            trade_price = round(float(resting_price), 2)
+            trade_id = "TRD-" + uuid.uuid4().hex[:10].upper()
+
+            trades_created.append((
+                trade_id,
+                now,
+                symbol,
+                trade_price,
+                matched_qty,
+                order_id,
+                resting_id,
+                0.0,
+            ))
+
+            new_resting_filled = int(resting_filled) + matched_qty
+            resting_status = (
+                "FILLED"
+                if new_resting_filled >= int(resting_qty)
+                else "PARTIAL"
+            )
+
+            con.execute(
+                """
+                UPDATE sim_orders
+                SET filled_quantity = ?, status = ?
+                WHERE order_id = ?
+                """,
+                (new_resting_filled, resting_status, resting_id),
+            )
+
+            if remaining == 0:
+                break
+
+        status = (
+            "FILLED" if filled_quantity == quantity
+            else "PARTIAL" if filled_quantity > 0
+            else "OPEN"
+        )
+
+        latency_us = (time.perf_counter_ns() - start_ns) / 1000.0
+
+        con.execute(
+            """
+            INSERT INTO sim_orders (
+                order_id, timestamp, symbol, side, price,
+                quantity, filled_quantity, status, latency_us
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                order_id, now, symbol, side, price,
+                quantity, filled_quantity, status, latency_us,
+            ),
+        )
+
+        for trade in trades_created:
+            con.execute(
+                """
+                INSERT INTO sim_trades (
+                    trade_id, timestamp, symbol, price, quantity,
+                    buy_order_id, sell_order_id, latency_us
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                trade,
+            )
+
+        # Update synthetic reference price after this event.
+        latest_price = round(
+            max(1.0, reference_price + random.choice([-0.5, 0, 0.5])),
+            2,
+        )
+
+        con.execute(
+            """
+            UPDATE sim_state SET last_price = ? WHERE symbol = ?
+            """,
+            (latest_price, symbol),
+        )
+
+        # Bound database growth for a lightweight demo.
+        con.execute("""
+            DELETE FROM sim_orders
+            WHERE order_id NOT IN (
+                SELECT order_id FROM sim_orders
+                ORDER BY timestamp DESC LIMIT ?
+            )
+        """, (MAX_ROWS,))
+
+        con.execute("""
+            DELETE FROM sim_trades
+            WHERE trade_id NOT IN (
+                SELECT trade_id FROM sim_trades
+                ORDER BY timestamp DESC LIMIT ?
+            )
+        """, (MAX_ROWS,))
 
 
-orders = get_all_orders() or []
-trades = get_all_trades() or []
-active = get_active_orders() or []
+# =========================================================
+# START SIMULATOR / SETTINGS
+# =========================================================
 
-buys = sorted(
-    [o for o in active if str(o.get("side", "")).lower() == "buy"],
-    key=lambda o: num(o.get("price")),
-    reverse=True,
-)
+init_db()
 
-sells = sorted(
-    [o for o in active if str(o.get("side", "")).lower() == "sell"],
-    key=lambda o: num(o.get("price")),
-)
+with st.sidebar:
+    st.markdown("## ⚡ CHRONOSMATCH")
+    st.caption("Order Matching & Execution Analytics")
+    st.divider()
 
-bid = max((num(o.get("price")) for o in buys), default=None)
-ask = min((num(o.get("price")) for o in sells), default=None)
+    selected_symbol = st.selectbox(
+        "SIMULATION SYMBOL",
+        SYMBOLS,
+        index=0,
+    )
 
-spread = (
-    ask - bid
-    if ask is not None and bid is not None
-    else None
-)
+    simulation_enabled = st.toggle(
+        "Run simulation",
+        value=True,
+        help="Generate synthetic orders locally.",
+    )
 
-units = sum(int(num(t.get("quantity"))) for t in trades)
+    event_rate = st.slider(
+        "Events per refresh",
+        min_value=1,
+        max_value=10,
+        value=3,
+    )
 
-st.markdown("""
-<div class="terminalbar">
-    <div>
-        <div class="brand">◈ ChronosMatch <span>XT</span></div>
-        <div class="smallnote">
-            SIMULATED MATCHING ENGINE · ORDER BOOK · EXECUTION MONITOR
+    st.divider()
+    st.markdown("### ENGINE STATUS")
+
+    if simulation_enabled:
+        st.success("SIMULATOR RUNNING")
+    else:
+        st.warning("SIMULATOR PAUSED")
+
+    st.caption("Data: synthetic / local only")
+    st.caption(f"Refresh: {REFRESH_MS // 1000} seconds")
+
+if simulation_enabled:
+    for _ in range(event_rate):
+        simulate_market_event(selected_symbol)
+
+# Reload the persisted state after generating events.
+orders_df = load_table("sim_orders")
+trades_df = load_table("sim_trades")
+state_df = load_table("sim_state")
+
+symbol_orders = orders_df[
+    orders_df["symbol"] == selected_symbol
+].copy() if not orders_df.empty else pd.DataFrame()
+
+symbol_trades = trades_df[
+    trades_df["symbol"] == selected_symbol
+].copy() if not trades_df.empty else pd.DataFrame()
+
+last_price = get_last_price(selected_symbol)
+
+
+# =========================================================
+# TERMINAL HEADER
+# =========================================================
+
+st.markdown(
+    f"""
+    <div class="terminal-header">
+        <div style="display:flex;justify-content:space-between;gap:20px;align-items:center;">
+            <div>
+                <div class="brand">CHRONOSMATCH <span>TERMINAL</span></div>
+                <div class="subtitle">
+                    ORDER MATCHING · MARKET DEPTH · EXECUTION ANALYTICS
+                </div>
+            </div>
+            <div style="text-align:right;">
+                <div class="engine-status">
+                    ● {"ENGINE ACTIVE" if simulation_enabled else "ENGINE PAUSED"}
+                </div>
+                <div class="subtitle">LOCAL SIMULATION · {selected_symbol}</div>
+            </div>
         </div>
     </div>
-    <div class="topmeta">
-        <span style="color:#16b981">● SIMULATION</span>
-        &nbsp; ENGINE READY
-        <br>LOCAL DATA ONLY · NO LIVE EXCHANGE
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
+
+st.caption(
+    "Simulation dashboard — all generated prices, orders and fills are synthetic."
+)
+
+
+# =========================================================
+# TOP METRICS
+# =========================================================
+
+total_orders = len(symbol_orders)
+total_trades = len(symbol_trades)
+
+filled_count = 0
+if not symbol_orders.empty:
+    filled_count = int(
+        symbol_orders["status"].isin(["FILLED", "PARTIAL"]).sum()
+    )
+
+fill_rate = (
+    100 * filled_count / total_orders
+    if total_orders else 0.0
+)
+
+traded_volume = (
+    int(symbol_trades["quantity"].sum())
+    if not symbol_trades.empty else 0
+)
+
+avg_latency = (
+    float(symbol_orders["latency_us"].mean())
+    if not symbol_orders.empty else 0.0
+)
 
 m1, m2, m3, m4, m5 = st.columns(5)
 
-m1.metric("Orders", len(orders))
-m2.metric("Executions", len(trades))
-m3.metric("Units traded", f"{units:,}")
-m4.metric("Best bid", price(bid))
-m5.metric("Best ask", price(ask))
+m1.metric("LAST SIM PRICE", f"${last_price:,.2f}")
+m2.metric("ORDERS", f"{total_orders:,}")
+m3.metric("TRADES", f"{total_trades:,}")
+m4.metric("FILL RATE", f"{fill_rate:.1f}%")
+m5.metric("AVG ORDER LATENCY", f"{avg_latency:,.1f} µs")
 
-page = st.radio(
-    "Workspace",
-    ["Trading Terminal", "Market Depth", "Order History", "Analytics"],
-    horizontal=True,
-    label_visibility="collapsed",
+
+# =========================================================
+# MAIN TERMINAL PANELS
+# =========================================================
+
+depth_tab, tape_tab, analytics_tab, history_tab = st.tabs(
+    ["MARKET DEPTH", "LIVE TRADE TAPE", "ANALYTICS", "ORDER HISTORY"]
 )
 
-if page == "Trading Terminal":
 
-    chart_col, depth_col, watch_col = st.columns(
-        [5.0, 5.4, 1.8],
-        gap="small",
-    )
+# ---------------------------------------------------------
+# MARKET DEPTH
+# ---------------------------------------------------------
 
-    with chart_col:
-        st.markdown(
-            '<div class="panelhead">▦ CHART · SIMULATED EXECUTION PRICE</div>',
-            unsafe_allow_html=True,
-        )
-
-        st.caption("SYMBOL: CM-SIM · TIMEFRAME: 1m · Local simulator")
-
-        try:
-            import plotly.graph_objects as go
-
-            trade_df = pd.DataFrame(trades)
-
-            if not trade_df.empty and "price" in trade_df.columns:
-                values = pd.to_numeric(
-                    trade_df["price"],
-                    errors="coerce",
-                ).dropna().tolist()
-            else:
-                values = []
-
-            illustrative = not bool(values)
-
-            if illustrative:
-                values = [
-                    100.0, 100.5, 99.8, 100.2, 99.6, 100.7,
-                    100.4, 101.0, 100.2, 100.8, 100.5, 101.2
-                ]
-
-            x = list(range(len(values)))
-            opens = [values[0]] + values[:-1]
-            highs = [
-                max(a, b) + (0.25 if illustrative else 0)
-                for a, b in zip(opens, values)
-            ]
-            lows = [
-                min(a, b) - (0.25 if illustrative else 0)
-                for a, b in zip(opens, values)
-            ]
-
-            fig = go.Figure()
-
-            fig.add_trace(go.Candlestick(
-                x=x,
-                open=opens,
-                high=highs,
-                low=lows,
-                close=values,
-                increasing_line_color="#18b887",
-                decreasing_line_color="#ef5365",
-                increasing_fillcolor="#168b70",
-                decreasing_fillcolor="#c74358",
-                name="Price",
-            ))
-
-            fig.add_trace(go.Bar(
-                x=x,
-                y=[1 + (i % 5) for i in range(len(values))],
-                yaxis="y2",
-                marker_color="#5363a4",
-                opacity=0.45,
-                name="Activity",
-            ))
-
-            if illustrative:
-                fig.add_annotation(
-                    text="ILLUSTRATIVE DATA · NO EXECUTIONS YET",
-                    xref="paper",
-                    yref="paper",
-                    x=0.5,
-                    y=0.92,
-                    showarrow=False,
-                    font=dict(color="#aab6d9", size=10),
-                )
-
-            fig.update_layout(
-                height=355,
-                margin=dict(l=8, r=8, t=8, b=8),
-                paper_bgcolor="#252a4c",
-                plot_bgcolor="#252a4c",
-                font=dict(color="#c4cbe8", family="IBM Plex Mono"),
-                xaxis_rangeslider_visible=False,
-                xaxis=dict(gridcolor="#353b61", title=None),
-                yaxis=dict(
-                    gridcolor="#353b61",
-                    title=None,
-                    side="right",
-                ),
-                yaxis2=dict(
-                    overlaying="y",
-                    side="left",
-                    showgrid=False,
-                    visible=False,
-                ),
-                legend=dict(orientation="h", y=1.02, x=0),
-            )
-
-            st.plotly_chart(
-                fig,
-                use_container_width=True,
-                config={"displayModeBar": False},
-            )
-
-            st.caption(
-                "Recorded executions are plotted when available. "
-                "Placeholder candles are illustrative only."
-            )
-
-        except ImportError:
-            st.info("Install Plotly using: pip install plotly")
-
-        st.markdown(
-            '<div class="panelhead">▤ TIME & SALES</div>',
-            unsafe_allow_html=True,
-        )
-
-        if trades:
-            st.dataframe(
-                pd.DataFrame(trades).tail(8),
-                hide_index=True,
-                use_container_width=True,
-                height=220,
-            )
-        else:
-            st.info("No executions yet. Matched trades will appear here.")
-
-    with depth_col:
-        st.markdown(
-            '<div class="panelhead">▥ MARKET DEPTH · BID / ASK</div>',
-            unsafe_allow_html=True,
-        )
-
-        depth_rows = []
-
-        for order in buys[:10]:
-            depth_rows.append({
-                "Bid Qty": qty(order),
-                "Bid": num(order.get("price")),
-                "Ask": None,
-                "Ask Qty": None,
-            })
-
-        for i, order in enumerate(sells[:10]):
-            if i < len(depth_rows):
-                depth_rows[i]["Ask"] = num(order.get("price"))
-                depth_rows[i]["Ask Qty"] = qty(order)
-            else:
-                depth_rows.append({
-                    "Bid Qty": None,
-                    "Bid": None,
-                    "Ask": num(order.get("price")),
-                    "Ask Qty": qty(order),
-                })
-
-        if depth_rows:
-            st.dataframe(
-                pd.DataFrame(depth_rows),
-                hide_index=True,
-                use_container_width=True,
-                height=370,
-            )
-        else:
-            st.info("Submit simulated orders to populate market depth.")
-
-        b1, b2, b3 = st.columns(3)
-        b1.metric("Best Bid", price(bid))
-        b2.metric("Best Ask", price(ask))
-        b3.metric("Spread", price(spread))
-
-        st.markdown(
-            '<div class="panelhead">▤ ORDER BOOK</div>',
-            unsafe_allow_html=True,
-        )
-
-        if active:
-            st.dataframe(
-                pd.DataFrame(active),
-                hide_index=True,
-                use_container_width=True,
-                height=200,
-            )
-        else:
-            st.caption("No active orders.")
-
-    with watch_col:
-        st.markdown(
-            '<div class="panelhead">☷ WATCHLIST</div>',
-            unsafe_allow_html=True,
-        )
-
-        st.markdown("""
-        <div class="panelbody">
-            <b>CM-SIM</b><br>
-            <span class="smallnote">ChronosMatch</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-        last_price = (
-            trades[-1].get("price")
-            if trades else None
-        )
-
-        st.metric("Last", price(last_price))
-        st.metric("Net change", "—")
-
-        st.markdown(
-            '<div class="panelhead">ORDER ENTRY</div>',
-            unsafe_allow_html=True,
-        )
-
-        with st.form("terminal_order_form"):
-            side = st.radio(
-                "Side",
-                ["buy", "sell"],
-                horizontal=True,
-            )
-
-            order_price = st.number_input(
-                "Limit price",
-                min_value=0.01,
-                value=100.00,
-                step=0.50,
-                format="%.2f",
-            )
-
-            quantity = st.number_input(
-                "Quantity",
-                min_value=1,
-                max_value=1_000_000,
-                value=10,
-                step=1,
-            )
-
-            submitted = st.form_submit_button(
-                "SUBMIT ORDER",
-                use_container_width=True,
-            )
-
-        if submitted:
-            try:
-                engine.submit_order(
-                    side,
-                    float(order_price),
-                    int(quantity),
-                )
-                st.success(f"{side.upper()} order submitted.")
-                st.rerun()
-            except Exception as error:
-                st.error(f"Order failed: {error}")
-
-        st.caption("Local simulator only; no real orders are sent.")
-
-        if st.button("↻ Refresh", use_container_width=True):
-            st.rerun()
-
-    st.markdown(
-        '<div class="panelhead">▤ ORDER HISTORY</div>',
-        unsafe_allow_html=True,
-    )
-
-    if orders:
-        st.dataframe(
-            pd.DataFrame(orders).tail(12),
-            hide_index=True,
-            use_container_width=True,
-            height=240,
-        )
-    else:
-        st.caption("Order history is empty.")
-
-elif page == "Market Depth":
-
-    a, b, c = st.columns(3)
-    a.metric("Best bid", price(bid))
-    b.metric("Best ask", price(ask))
-    c.metric("Spread", price(spread))
-
+with depth_tab:
     left, right = st.columns(2)
 
-    with left:
-        st.subheader("BUY SIDE · BIDS")
-        st.dataframe(
-            pd.DataFrame(buys),
-            hide_index=True,
-            use_container_width=True,
+    if not symbol_orders.empty:
+        open_orders = symbol_orders[
+            symbol_orders["status"].isin(["OPEN", "PARTIAL"])
+        ].copy()
+    else:
+        open_orders = pd.DataFrame()
+
+    if not open_orders.empty:
+        bids = (
+            open_orders[open_orders["side"] == "BUY"]
+            .groupby("price", as_index=False)["quantity"]
+            .sum()
+            .sort_values("price", ascending=False)
+            .head(10)
         )
+
+        asks = (
+            open_orders[open_orders["side"] == "SELL"]
+            .groupby("price", as_index=False)["quantity"]
+            .sum()
+            .sort_values("price", ascending=True)
+            .head(10)
+        )
+    else:
+        bids = pd.DataFrame(columns=["price", "quantity"])
+        asks = pd.DataFrame(columns=["price", "quantity"])
+
+    with left:
+        st.markdown("### 🟢 BUY SIDE / BIDS")
+        if bids.empty:
+            st.info("No resting buy orders yet.")
+        else:
+            bids["notional"] = bids["price"] * bids["quantity"]
+            bids.columns = ["Price ($)", "Quantity", "Notional ($)"]
+            st.dataframe(
+                bids,
+                width="stretch",
+                hide_index=True,
+            )
 
     with right:
-        st.subheader("SELL SIDE · ASKS")
-        st.dataframe(
-            pd.DataFrame(sells),
-            hide_index=True,
-            use_container_width=True,
-        )
-
-    st.subheader("Aggregated Market Depth")
-
-    try:
-        import plotly.graph_objects as go
-
-        fig = go.Figure()
-
-        if buys:
-            bid_df = pd.DataFrame([
-                {"price": num(o.get("price")), "qty": qty(o)}
-                for o in buys
-            ])
-            bid_df = (
-                bid_df.groupby("price", as_index=False)["qty"]
-                .sum()
-                .sort_values("price")
+        st.markdown("### 🔴 SELL SIDE / ASKS")
+        if asks.empty:
+            st.info("No resting sell orders yet.")
+        else:
+            asks["notional"] = asks["price"] * asks["quantity"]
+            asks.columns = ["Price ($)", "Quantity", "Notional ($)"]
+            st.dataframe(
+                asks,
+                width="stretch",
+                hide_index=True,
             )
 
-            fig.add_trace(go.Bar(
-                x=bid_df["price"],
-                y=bid_df["qty"],
-                name="Bids",
-                marker_color="#16b981",
-            ))
+    st.markdown("### OPEN ORDER BOOK")
 
-        if sells:
-            ask_df = pd.DataFrame([
-                {"price": num(o.get("price")), "qty": qty(o)}
-                for o in sells
-            ])
-            ask_df = (
-                ask_df.groupby("price", as_index=False)["qty"]
-                .sum()
-                .sort_values("price")
-            )
-
-            fig.add_trace(go.Bar(
-                x=ask_df["price"],
-                y=ask_df["qty"],
-                name="Asks",
-                marker_color="#ef5365",
-            ))
-
-        fig.update_layout(
-            barmode="overlay",
-            height=330,
-            paper_bgcolor="#252a4c",
-            plot_bgcolor="#252a4c",
-            font_color="#dfe6fb",
-            xaxis_gridcolor="#353b61",
-            yaxis_gridcolor="#353b61",
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True,
-            config={"displayModeBar": False},
-        )
-
-    except ImportError:
-        st.info("Install Plotly using: pip install plotly")
-
-elif page == "Order History":
-
-    st.subheader("Order History")
-
-    if orders:
-        df = pd.DataFrame(orders)
-
-        c1, c2 = st.columns(2)
-
-        side_filter = c1.selectbox(
-            "Side",
-            ["All", "buy", "sell"],
-        )
-
-        statuses = (
-            ["All"] + sorted(df["status"].dropna().astype(str).unique().tolist())
-            if "status" in df else ["All"]
-        )
-
-        status_filter = c2.selectbox("Status", statuses)
-
-        if side_filter != "All" and "side" in df:
-            df = df[
-                df["side"].astype(str).str.lower() == side_filter
-            ]
-
-        if status_filter != "All" and "status" in df:
-            df = df[df["status"].astype(str) == status_filter]
-
-        st.dataframe(
-            df,
-            hide_index=True,
-            use_container_width=True,
-        )
-
-        st.download_button(
-            "Download CSV",
-            df.to_csv(index=False).encode("utf-8"),
-            file_name="chronosmatch_orders.csv",
-            mime="text/csv",
-        )
+    if open_orders.empty:
+        st.info("No open orders. New orders appear as the simulator runs.")
     else:
-        st.info("No orders recorded yet.")
+        display_book = open_orders[
+            [
+                "timestamp", "order_id", "symbol", "side",
+                "price", "quantity", "filled_quantity", "status",
+            ]
+        ].sort_values("timestamp", ascending=False).head(30)
 
-elif page == "Analytics":
+        st.dataframe(
+            display_book,
+            width="stretch",
+            hide_index=True,
+        )
 
-    st.subheader("Execution Analytics")
+
+# ---------------------------------------------------------
+# LIVE TRADE TAPE
+# ---------------------------------------------------------
+
+with tape_tab:
+    st.markdown("### ⚡ EXECUTION TAPE")
+
+    if symbol_trades.empty:
+        st.info("Waiting for the first simulated execution.")
+    else:
+        tape = symbol_trades.sort_values(
+            "timestamp", ascending=False
+        ).head(50).copy()
+
+        tape["notional"] = tape["price"] * tape["quantity"]
+
+        tape = tape[
+            [
+                "timestamp", "trade_id", "symbol", "price",
+                "quantity", "notional", "latency_us",
+            ]
+        ]
+
+        tape.columns = [
+            "Timestamp", "Trade ID", "Symbol", "Price ($)",
+            "Quantity", "Notional ($)", "Latency (µs)",
+        ]
+
+        st.dataframe(
+            tape,
+            width="stretch",
+            hide_index=True,
+        )
+
+
+# ---------------------------------------------------------
+# ANALYTICS
+# ---------------------------------------------------------
+
+with analytics_tab:
+    st.markdown("### EXECUTION ANALYTICS")
 
     c1, c2 = st.columns(2)
-    c1.metric("Executions", len(trades))
-    c2.metric("Units traded", f"{units:,}")
 
-    if trades:
-        trade_df = pd.DataFrame(trades)
+    with c1:
+        st.markdown("#### Trade Price History")
 
-        if "price" in trade_df.columns:
-            trade_df["price"] = pd.to_numeric(
-                trade_df["price"],
-                errors="coerce",
+        if not symbol_trades.empty:
+            chart_data = symbol_trades.copy()
+            chart_data["timestamp"] = pd.to_datetime(
+                chart_data["timestamp"], errors="coerce"
             )
-            st.line_chart(
-                trade_df["price"].dropna(),
-                height=280,
+            chart_data = chart_data.dropna(subset=["timestamp"])
+            chart_data = chart_data.sort_values("timestamp")
+
+            if not chart_data.empty:
+                st.line_chart(
+                    chart_data.set_index("timestamp")[["price"]],
+                    width="stretch",
+                )
+            else:
+                st.info("Price history will appear after executions.")
+        else:
+            st.info("Price history will appear after executions.")
+
+    with c2:
+        st.markdown("#### Orders by Side")
+
+        if not symbol_orders.empty:
+            side_counts = (
+                symbol_orders.groupby("side")
+                .size()
+                .rename("orders")
             )
 
-        st.dataframe(
-            trade_df,
-            hide_index=True,
-            use_container_width=True,
-        )
+            st.bar_chart(side_counts, width="stretch")
+        else:
+            st.info("Waiting for orders.")
+
+    st.markdown("#### Engine Counters")
+
+    e1, e2, e3 = st.columns(3)
+    e1.metric("TRADED QUANTITY", f"{traded_volume:,}")
+    e2.metric("OPEN ORDERS", f"{len(open_orders):,}")
+    e3.metric("SYMBOLS CONFIGURED", len(SYMBOLS))
+
+    st.caption(
+        "Latency is the local Python time spent processing a simulated order. "
+        "It is not exchange or network latency."
+    )
+
+
+# ---------------------------------------------------------
+# ORDER HISTORY
+# ---------------------------------------------------------
+
+with history_tab:
+    st.markdown("### RECENT ORDERS")
+
+    if symbol_orders.empty:
+        st.info("No orders generated for this symbol yet.")
     else:
-        st.info(
-            "No executions yet. Analytics will appear after "
-            "compatible orders are matched."
+        st.dataframe(
+            symbol_orders.sort_values(
+                "timestamp", ascending=False
+            ).head(100),
+            width="stretch",
+            hide_index=True,
         )
 
-st.caption(
-    "CHRONOSMATCH · Educational matching-engine simulator · "
-    "Prices shown are local simulation data, not live exchange quotes."
+    st.markdown("### RECENT EXECUTIONS")
+
+    if symbol_trades.empty:
+        st.info("No executions recorded yet.")
+    else:
+        st.dataframe(
+            symbol_trades.sort_values(
+                "timestamp", ascending=False
+            ).head(100),
+            width="stretch",
+            hide_index=True,
+        )
+
+
+# =========================================================
+# FOOTER
+# =========================================================
+
+st.markdown(
+    f"""
+    <div class="footer">
+        CHRONOSMATCH · LOCAL MATCHING SIMULATOR · AUTO REFRESH ENABLED
+        <br><br>
+        Last dashboard render: {datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")}
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
