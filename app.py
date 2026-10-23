@@ -1,419 +1,235 @@
 
-from __future__ import annotations
-
-import random
 import sqlite3
-import time
 import uuid
+import random
+import time
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
-# ==========================================================
-# CHRONOSMATCH - HIGH FREQUENCY TRADING SIMULATION TERMINAL
-# Educational simulation only. No live trading.
-# ==========================================================
+# ============================================================
+# CHRONOSMATCH INSTITUTIONAL SIMULATION TERMINAL
+# Simulated data only. No broker connection or live trading.
+# Uses a NEW database so older schemas cannot cause errors.
+# ============================================================
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "chronosmatch_simulation.db"
+DB_FILE = "chronosmatch_institutional.db"
 
 SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA"]
 
-DEFAULT_PRICES = {
-    "AAPL": 249.00,
-    "MSFT": 512.00,
-    "NVDA": 184.00,
-    "TSLA": 341.00,
+START_PRICES = {
+    "AAPL": 225.00,
+    "MSFT": 510.00,
+    "NVDA": 180.00,
+    "TSLA": 350.00,
 }
 
 st.set_page_config(
-    page_title="ChronosMatch | HFT Terminal",
+    page_title="ChronosMatch Institutional",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ==========================================================
-# STYLING
-# ==========================================================
 
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&display=swap');
-
-    .stApp {
-        background: #080d16;
-        color: #e6edf7;
-        font-family: Inter, sans-serif;
-    }
-
-    [data-testid="stHeader"] {
-        background: #080d16;
-    }
-
-    [data-testid="stSidebar"] {
-        background: #0b1220;
-        border-right: 1px solid #20324a;
-    }
-
-    [data-testid="stMetric"] {
-        background: linear-gradient(145deg, #101b2c, #0c1421);
-        border: 1px solid #20324a;
-        border-radius: 12px;
-        padding: 14px;
-    }
-
-    [data-testid="stMetricLabel"] {
-        color: #93a8c3;
-    }
-
-    [data-testid="stMetricValue"] {
-        color: #f4f8ff;
-        font-family: 'DM Mono', monospace;
-        font-size: 24px;
-    }
-
-    .terminal-title {
-        font-size: 30px;
-        font-weight: 800;
-        color: #f3f7ff;
-    }
-
-    .terminal-sub {
-        color: #8ea3bf;
-        font-size: 13px;
-    }
-
-    .sim-badge {
-        display: inline-block;
-        background: #33260f;
-        color: #fbbf24;
-        border: 1px solid #76561b;
-        border-radius: 20px;
-        padding: 5px 10px;
-        font-size: 11px;
-        font-weight: 700;
-    }
-
-    div[data-testid="stDataFrame"] {
-        border: 1px solid #20324a;
-        border-radius: 10px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ==========================================================
-# DATABASE CONNECTION
-# ==========================================================
+# ---------------- DATABASE ----------------
 
 def connect_db():
-    conn = sqlite3.connect(
-        DB_PATH,
-        timeout=15,
-        check_same_thread=False,
-    )
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=15000")
-    return conn
+    return sqlite3.connect(DB_FILE, timeout=15)
 
 
-def columns(conn, table):
-    return {
-        row["name"]
-        for row in conn.execute(
-            f"PRAGMA table_info({table})"
-        ).fetchall()
-    }
-
-
-def ensure_column(conn, table, name, definition):
-    if name not in columns(conn, table):
-        conn.execute(
-            f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
-        )
-
-
-def initialize_db():
-    with connect_db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sim_orders (
-                order_id TEXT PRIMARY KEY,
-                timestamp TEXT NOT NULL,
+def init_db():
+    with connect_db() as con:
+        con.executescript("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 side TEXT NOT NULL,
                 price REAL NOT NULL,
                 quantity INTEGER NOT NULL,
                 filled_quantity INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'OPEN',
-                latency_us REAL NOT NULL DEFAULT 0,
-                created_at TEXT,
-                updated_at TEXT
-            )
-        """)
+                remaining INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                latency_us INTEGER NOT NULL DEFAULT 0
+            );
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sim_trades (
-                trade_id TEXT PRIMARY KEY,
-                timestamp TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS trades (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 price REAL NOT NULL,
                 quantity INTEGER NOT NULL,
                 buy_order_id TEXT NOT NULL,
                 sell_order_id TEXT NOT NULL,
-                latency_us REAL NOT NULL DEFAULT 0,
-                latency_ms REAL DEFAULT 0
-            )
-        """)
+                latency_us INTEGER NOT NULL
+            );
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sim_state (
-                symbol TEXT PRIMARY KEY,
-                last_price REAL NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sim_ticks (
+            CREATE TABLE IF NOT EXISTS price_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 price REAL NOT NULL,
-                timestamp TEXT NOT NULL
-            )
-        """)
+                volume INTEGER NOT NULL,
+                latency_us INTEGER NOT NULL
+            );
 
-        # Add optional fields if an older table is missing them.
-        order_fields = {
-            "timestamp": "TEXT",
-            "symbol": "TEXT",
-            "side": "TEXT",
-            "price": "REAL DEFAULT 0",
-            "quantity": "INTEGER DEFAULT 0",
-            "filled_quantity": "INTEGER DEFAULT 0",
-            "status": "TEXT DEFAULT 'OPEN'",
-            "latency_us": "REAL DEFAULT 0",
-            "created_at": "TEXT",
-            "updated_at": "TEXT",
-        }
+            CREATE INDEX IF NOT EXISTS idx_orders_symbol
+            ON orders(symbol, side, status);
 
-        for name, definition in order_fields.items():
-            ensure_column(conn, "sim_orders", name, definition)
+            CREATE INDEX IF NOT EXISTS idx_trades_symbol
+            ON trades(symbol, created_at);
 
-        trade_fields = {
-            "timestamp": "TEXT",
-            "symbol": "TEXT",
-            "price": "REAL DEFAULT 0",
-            "quantity": "INTEGER DEFAULT 0",
-            "buy_order_id": "TEXT",
-            "sell_order_id": "TEXT",
-            "latency_us": "REAL DEFAULT 0",
-            "latency_ms": "REAL DEFAULT 0",
-        }
-
-        for name, definition in trade_fields.items():
-            ensure_column(conn, "sim_trades", name, definition)
-
-        now = datetime.now().isoformat(timespec="milliseconds")
-
-        for symbol, price in DEFAULT_PRICES.items():
-            conn.execute("""
-                INSERT OR IGNORE INTO sim_state
-                (symbol, last_price, updated_at)
-                VALUES (?, ?, ?)
-            """, (symbol, price, now))
-
-            conn.execute("""
-                INSERT INTO sim_ticks(symbol, price, timestamp)
-                SELECT ?, ?, ?
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM sim_ticks WHERE symbol = ?
-                )
-            """, (symbol, price, now, symbol))
-
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_sim_orders_symbol
-            ON sim_orders(symbol, status)
-        """)
-
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_sim_trades_symbol
-            ON sim_trades(symbol, timestamp)
+            CREATE INDEX IF NOT EXISTS idx_prices_symbol
+            ON price_history(symbol, created_at);
         """)
 
 
-def read_df(sql, params=()):
-    with connect_db() as conn:
-        return pd.read_sql_query(sql, conn, params=params)
+def timestamp():
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
-def current_price(symbol):
-    with connect_db() as conn:
-        row = conn.execute(
-            "SELECT last_price FROM sim_state WHERE symbol=?",
-            (symbol,),
-        ).fetchone()
-
-    if row:
-        return float(row["last_price"])
-
-    return DEFAULT_PRICES[symbol]
+def query_df(sql, params=()):
+    con = connect_db()
+    try:
+        return pd.read_sql_query(sql, con, params=params)
+    finally:
+        con.close()
 
 
-def update_price(symbol, price):
-    now = datetime.now().isoformat(timespec="milliseconds")
+# ---------------- SESSION STATE ----------------
 
-    with connect_db() as conn:
-        conn.execute("""
-            INSERT INTO sim_state(symbol, last_price, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(symbol) DO UPDATE SET
-                last_price=excluded.last_price,
-                updated_at=excluded.updated_at
-        """, (symbol, price, now))
+def init_state():
+    if "prices" not in st.session_state:
+        st.session_state.prices = dict(START_PRICES)
 
-        conn.execute("""
-            INSERT INTO sim_ticks(symbol, price, timestamp)
-            VALUES (?, ?, ?)
-        """, (symbol, price, now))
+    if "auto_run" not in st.session_state:
+        st.session_state.auto_run = True
 
-        conn.execute("""
-            DELETE FROM sim_ticks
-            WHERE rowid IN (
-                SELECT rowid FROM sim_ticks
-                WHERE symbol=?
-                ORDER BY rowid DESC
-                LIMIT -1 OFFSET 500
-            )
-        """, (symbol,))
+    if "symbol" not in st.session_state:
+        st.session_state.symbol = "AAPL"
+
+    if "orders_per_cycle" not in st.session_state:
+        st.session_state.orders_per_cycle = 3
 
 
-# ==========================================================
-# ORDER MATCHING ENGINE
-# ==========================================================
+# ---------------- ORDER MATCHING ----------------
 
-def place_order(symbol, side, quantity, price):
-    side = side.upper()
-    quantity = int(quantity)
-    price = round(float(price), 2)
+def submit_order(symbol, side, quantity, price):
+    start = time.perf_counter()
 
-    if symbol not in SYMBOLS:
-        raise ValueError("Unsupported market symbol.")
-
-    if side not in ("BUY", "SELL"):
-        raise ValueError("Side must be BUY or SELL.")
-
-    if quantity < 1:
-        raise ValueError("Quantity must be at least 1.")
-
-    if price <= 0:
-        raise ValueError("Price must be greater than zero.")
-
-    started = time.perf_counter()
     order_id = uuid.uuid4().hex[:12].upper()
-    now = datetime.now().isoformat(timespec="milliseconds")
-
+    quantity = int(quantity)
     remaining = quantity
     filled = 0
+    created_at = timestamp()
 
-    with connect_db() as conn:
-        conn.execute("BEGIN IMMEDIATE")
+    con = connect_db()
 
-        conn.execute("""
-            INSERT INTO sim_orders (
-                order_id, timestamp, symbol, side, price,
-                quantity, filled_quantity, status,
-                latency_us, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, 0, 'OPEN', 0, ?, ?)
-        """, (
-            order_id, now, symbol, side, price,
-            quantity, now, now,
-        ))
+    try:
+        con.execute("BEGIN")
 
-        opposite = "SELL" if side == "BUY" else "BUY"
-        comparator = "<=" if side == "BUY" else ">="
-        price_sort = "ASC" if side == "BUY" else "DESC"
+        if side == "BUY":
+            resting_orders = con.execute("""
+                SELECT id, price, quantity, filled_quantity, remaining
+                FROM orders
+                WHERE symbol = ?
+                  AND side = 'SELL'
+                  AND status IN ('OPEN', 'PARTIAL')
+                  AND remaining > 0
+                  AND price <= ?
+                ORDER BY price ASC, created_at ASC
+            """, (symbol, float(price))).fetchall()
 
-        resting = conn.execute(f"""
-            SELECT * FROM sim_orders
-            WHERE symbol=?
-              AND side=?
-              AND status IN ('OPEN', 'PARTIAL')
-              AND quantity > filled_quantity
-              AND price {comparator} ?
-            ORDER BY price {price_sort}, timestamp ASC, rowid ASC
-        """, (symbol, opposite, price)).fetchall()
+        else:
+            resting_orders = con.execute("""
+                SELECT id, price, quantity, filled_quantity, remaining
+                FROM orders
+                WHERE symbol = ?
+                  AND side = 'BUY'
+                  AND status IN ('OPEN', 'PARTIAL')
+                  AND remaining > 0
+                  AND price >= ?
+                ORDER BY price DESC, created_at ASC
+            """, (symbol, float(price))).fetchall()
 
-        for old in resting:
+        for resting in resting_orders:
             if remaining <= 0:
                 break
 
-            old_remaining = (
-                int(old["quantity"]) - int(old["filled_quantity"])
-            )
+            resting_id, resting_price, _, resting_filled, resting_remaining = resting
 
-            fill_qty = min(remaining, old_remaining)
+            resting_remaining = int(resting_remaining)
+            resting_filled = int(resting_filled)
+
+            fill_qty = min(remaining, resting_remaining)
 
             if fill_qty <= 0:
                 continue
 
-            execution_price = float(old["price"])
+            # The resting order's price determines execution price.
+            trade_price = float(resting_price)
 
             if side == "BUY":
-                buy_id, sell_id = order_id, old["order_id"]
+                buy_id = order_id
+                sell_id = resting_id
             else:
-                buy_id, sell_id = old["order_id"], order_id
+                buy_id = resting_id
+                sell_id = order_id
 
-            latency_ms = (time.perf_counter() - started) * 1000
-            trade_time = datetime.now().isoformat(
-                timespec="milliseconds"
-            )
-
-            conn.execute("""
-                INSERT INTO sim_trades (
-                    trade_id, timestamp, symbol, price, quantity,
-                    buy_order_id, sell_order_id, latency_us, latency_ms
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            con.execute("""
+                INSERT INTO trades (
+                    id, created_at, symbol, price, quantity,
+                    buy_order_id, sell_order_id, latency_us
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 uuid.uuid4().hex[:12].upper(),
-                trade_time,
+                timestamp(),
                 symbol,
-                execution_price,
+                trade_price,
                 fill_qty,
                 buy_id,
                 sell_id,
-                latency_ms * 1000,
-                latency_ms,
+                0,
             ))
 
-            old_filled = int(old["filled_quantity"]) + fill_qty
-            old_status = (
+            new_resting_remaining = resting_remaining - fill_qty
+            new_resting_filled = resting_filled + fill_qty
+
+            resting_status = (
                 "FILLED"
-                if old_filled >= int(old["quantity"])
+                if new_resting_remaining == 0
                 else "PARTIAL"
             )
 
-            conn.execute("""
-                UPDATE sim_orders
-                SET filled_quantity=?, status=?, updated_at=?
-                WHERE order_id=?
+            con.execute("""
+                UPDATE orders
+                SET remaining = ?,
+                    filled_quantity = ?,
+                    status = ?
+                WHERE id = ?
             """, (
-                old_filled,
-                old_status,
-                trade_time,
-                old["order_id"],
+                new_resting_remaining,
+                new_resting_filled,
+                resting_status,
+                resting_id,
             ))
 
             remaining -= fill_qty
             filled += fill_qty
+
+        latency_us = max(
+            1,
+            int((time.perf_counter() - start) * 1_000_000),
+        )
+
+        # Update latency for trades created by this incoming order.
+        con.execute("""
+            UPDATE trades
+            SET latency_us = ?
+            WHERE buy_order_id = ? OR sell_order_id = ?
+        """, (latency_us, order_id, order_id))
 
         status = (
             "FILLED" if remaining == 0
@@ -421,596 +237,614 @@ def place_order(symbol, side, quantity, price):
             else "OPEN"
         )
 
-        total_latency_us = (time.perf_counter() - started) * 1_000_000
-
-        conn.execute("""
-            UPDATE sim_orders
-            SET filled_quantity=?, status=?, updated_at=?, latency_us=?
-            WHERE order_id=?
+        con.execute("""
+            INSERT INTO orders (
+                id, created_at, symbol, side, price,
+                quantity, filled_quantity, remaining,
+                status, latency_us
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            filled,
-            status,
-            datetime.now().isoformat(timespec="milliseconds"),
-            total_latency_us,
             order_id,
+            created_at,
+            symbol,
+            side,
+            float(price),
+            quantity,
+            filled,
+            remaining,
+            status,
+            latency_us,
         ))
 
-    return {
-        "order_id": order_id,
-        "status": status,
-        "filled": filled,
-        "remaining": remaining,
-    }
+        con.commit()
+
+        return order_id, status, remaining, latency_us
+
+    except Exception:
+        con.rollback()
+        raise
+
+    finally:
+        con.close()
 
 
-def generate_event(symbol):
-    old_price = current_price(symbol)
+# ---------------- MARKET SIMULATION ----------------
 
-    new_price = max(
-        1.0,
-        old_price * (1 + random.uniform(-0.001, 0.001)),
-    )
-
-    new_price = round(new_price, 2)
-    update_price(symbol, new_price)
-
-    side = random.choice(["BUY", "SELL"])
-    limit_price = round(
-        new_price * (1 + random.uniform(-0.0015, 0.0015)),
-        2,
-    )
-
-    quantity = random.choice([1, 2, 3, 5, 8, 10, 12, 20, 25])
-
-    return place_order(symbol, side, quantity, limit_price)
-
-
-# ==========================================================
-# DATA LOADERS
-# ==========================================================
-
-def get_orders(symbol, limit=300):
-    return read_df("""
-        SELECT order_id, timestamp, symbol, side, price, quantity,
-               filled_quantity,
-               MAX(quantity-filled_quantity, 0) AS remaining,
-               status, latency_us
-        FROM sim_orders
-        WHERE symbol=?
-        ORDER BY rowid DESC
-        LIMIT ?
-    """, (symbol, limit))
-
-
-def get_trades(symbol, limit=300):
-    return read_df("""
-        SELECT trade_id, timestamp, symbol, price, quantity,
-               buy_order_id, sell_order_id, latency_us, latency_ms
-        FROM sim_trades
-        WHERE symbol=?
-        ORDER BY rowid DESC
-        LIMIT ?
-    """, (symbol, limit))
-
-
-def get_ticks(symbol, limit=250):
-    frame = read_df("""
-        SELECT price, timestamp FROM sim_ticks
-        WHERE symbol=?
-        ORDER BY rowid DESC
-        LIMIT ?
-    """, (symbol, limit))
-
-    if not frame.empty:
-        frame = frame.iloc[::-1].reset_index(drop=True)
-        frame["timestamp"] = pd.to_datetime(
-            frame["timestamp"], errors="coerce"
+def generate_activity(symbol, count):
+    for _ in range(count):
+        previous = st.session_state.prices.get(
+            symbol, START_PRICES[symbol]
         )
 
-    return frame
+        new_price = max(
+            0.01,
+            round(previous * (1 + random.uniform(-0.0015, 0.0015)), 2),
+        )
+
+        st.session_state.prices[symbol] = new_price
+
+        side = random.choice(["BUY", "SELL"])
+        quantity = random.choice([10, 20, 25, 50, 75, 100])
+
+        offset = random.choice([0.00, 0.01, 0.02, 0.03])
+
+        if side == "BUY":
+            limit_price = round(new_price + offset, 2)
+        else:
+            limit_price = round(max(0.01, new_price - offset), 2)
+
+        _, _, _, latency_us = submit_order(
+            symbol, side, quantity, limit_price
+        )
+
+        con = connect_db()
+        try:
+            con.execute("""
+                INSERT INTO price_history (
+                    created_at, symbol, price, volume, latency_us
+                ) VALUES (?, ?, ?, ?, ?)
+            """, (
+                timestamp(),
+                symbol,
+                new_price,
+                quantity,
+                latency_us,
+            ))
+            con.commit()
+        finally:
+            con.close()
 
 
-def csv_data(frame):
-    return frame.to_csv(index=False).encode("utf-8-sig")
+# ---------------- DASHBOARD STYLE ----------------
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+.stApp {
+    background: radial-gradient(ellipse at top, #0b2821 0%, #061310 65%);
+    color: #e4fff5;
+    font-family: Inter, sans-serif;
+}
+
+[data-testid="stSidebar"] {
+    background: #071914;
+    border-right: 1px solid #1d594b;
+}
+
+[data-testid="stHeader"] {
+    background: rgba(6,19,16,.94);
+}
+
+.brand {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 23px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.brand span {
+    color: #43e0b0;
+}
+
+.sub {
+    color: #86b6a8;
+    font-size: 10px;
+    letter-spacing: 1.3px;
+    margin-top: 6px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    gap: 15px;
+    padding: 20px;
+    margin-bottom: 15px;
+    background: linear-gradient(110deg, #102d25, #091b17);
+    border: 1px solid #24735e;
+    border-radius: 12px;
+}
+
+.status {
+    font-family: monospace;
+    color: #43e0b0;
+    font-size: 12px;
+    text-align: right;
+}
+
+.card {
+    background: linear-gradient(140deg, #102b24, #0a1c18);
+    border: 1px solid #1c5949;
+    border-radius: 10px;
+    padding: 14px;
+    min-height: 100px;
+}
+
+.label {
+    color: #86b6a8;
+    font-size: 10px;
+    letter-spacing: 1.2px;
+}
+
+.value {
+    font-family: monospace;
+    font-size: 23px;
+    font-weight: 600;
+    color: #eafff7;
+    margin-top: 8px;
+}
+
+.note {
+    font-size: 10px;
+    color: #83b8a7;
+    margin-top: 5px;
+}
+
+.section {
+    font-size: 11px;
+    color: #9dd7c4;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    margin: 22px 0 10px;
+}
+
+.warning {
+    border: 1px solid #65552b;
+    background: #211e12;
+    color: #e8d79d;
+    border-radius: 7px;
+    padding: 10px;
+    margin-bottom: 14px;
+    font-size: 11px;
+}
+
+div[data-testid="stDataFrame"] {
+    border: 1px solid #1c5949;
+    border-radius: 8px;
+}
+
+footer {
+    visibility: hidden;
+}
+</style>
+""", unsafe_allow_html=True)
 
 
-def money(value):
-    return f"${float(value):,.2f}"
+# ---------------- START APP ----------------
 
-
-# ==========================================================
-# STARTUP
-# ==========================================================
-
-initialize_db()
-st_autorefresh(interval=2000, key="terminal_refresh")
-
-# ==========================================================
-# SIDEBAR
-# ==========================================================
+init_db()
+init_state()
 
 with st.sidebar:
-    st.markdown("## ◈ CHRONOSMATCH")
-    st.caption("ZERO-COPY HFT ENGINE")
-    st.markdown("---")
-
-    symbol = st.selectbox("Market symbol", SYMBOLS)
-
-    automatic = st.toggle("Automatic simulation", value=True)
-    events = st.slider("Events per refresh", 1, 10, 3)
-
-    st.markdown("---")
-    st.markdown("### Manual order")
-
-    with st.form("manual_order"):
-        manual_symbol = st.selectbox(
-            "Symbol", SYMBOLS, key="manual_symbol"
-        )
-        manual_side = st.radio(
-            "Side", ["BUY", "SELL"], horizontal=True
-        )
-        manual_quantity = st.number_input(
-            "Quantity", min_value=1, max_value=100000, value=10
-        )
-        manual_price = st.number_input(
-            "Limit price ($)",
-            min_value=0.01,
-            value=float(round(current_price(manual_symbol), 2)),
-            step=0.05,
-            format="%.2f",
-        )
-        submit = st.form_submit_button(
-            "Submit simulated order",
-            use_container_width=True,
-        )
-
-    st.markdown("---")
     st.markdown(
-        '<span class="sim-badge">SIMULATION ONLY</span>',
+        '<div class="brand">CHRONOS<span>MATCH</span></div>',
         unsafe_allow_html=True,
     )
-    st.caption("No broker or live exchange connection.")
+    st.markdown(
+        '<div class="sub">INSTITUTIONAL SIMULATION TERMINAL</div>',
+        unsafe_allow_html=True,
+    )
 
-if automatic:
-    for _ in range(events):
-        try:
-            generate_event(symbol)
-        except Exception as exc:
-            st.sidebar.error(f"Simulation error: {exc}")
-            break
+    st.divider()
+    st.markdown("**MARKET CONFIGURATION**")
 
-if submit:
+    symbol = st.selectbox(
+        "Instrument",
+        SYMBOLS,
+        index=SYMBOLS.index(st.session_state.symbol),
+    )
+    st.session_state.symbol = symbol
+
+    st.session_state.orders_per_cycle = st.slider(
+        "Orders per cycle",
+        min_value=1,
+        max_value=10,
+        value=st.session_state.orders_per_cycle,
+    )
+
+    st.divider()
+    st.markdown("**SIMULATION CONTROLS**")
+
+    st.session_state.auto_run = st.toggle(
+        "Automatic simulation",
+        value=st.session_state.auto_run,
+    )
+
+    if st.button("Generate one cycle", width="stretch"):
+        generate_activity(symbol, st.session_state.orders_per_cycle)
+        st.rerun()
+
+    if st.button("Reset simulation data", width="stretch"):
+        # Only the NEW dashboard database is cleared.
+        with connect_db() as con:
+            con.execute("DELETE FROM orders")
+            con.execute("DELETE FROM trades")
+            con.execute("DELETE FROM price_history")
+        st.session_state.prices = dict(START_PRICES)
+        st.rerun()
+
+    st.divider()
+    st.markdown("**SYSTEM STATUS**")
+    st.markdown("🟢 Local simulation ready")
+    st.markdown("🟢 Dashboard database connected")
+    st.markdown("⚪ Broker connection disabled")
+    st.markdown("⚪ Live trading disabled")
+
+
+if st.session_state.auto_run:
+    generate_activity(symbol, st.session_state.orders_per_cycle)
+
     try:
-        result = place_order(
-            manual_symbol,
-            manual_side,
-            manual_quantity,
-            manual_price,
+        from streamlit_autorefresh import st_autorefresh
+        st_autorefresh(
+            interval=2000,
+            key="chronosmatch_refresh",
         )
-        st.sidebar.success(
-            f"{result['order_id']} · {result['status']} · "
-            f"filled {result['filled']}/{manual_quantity}"
+    except ImportError:
+        st.info(
+            "For automatic refreshing, install "
+            "streamlit-autorefresh."
         )
-    except Exception as exc:
-        st.sidebar.error(f"Order failed: {exc}")
 
-# ==========================================================
-# LOAD DATA
-# ==========================================================
 
-price = current_price(symbol)
-orders = get_orders(symbol)
-trades = get_trades(symbol)
-ticks = get_ticks(symbol)
+# ---------------- HEADER ----------------
 
-order_count = len(orders)
-trade_count = len(trades)
+st.markdown("""
+<div class="header">
+  <div>
+    <div class="brand">CHRONOSMATCH <span>INSTITUTIONAL</span></div>
+    <div class="sub">
+      ORDER MANAGEMENT · MARKET DEPTH · EXECUTION ANALYTICS
+    </div>
+  </div>
+  <div>
+    <div class="status">● LOCAL SIMULATION ACTIVE</div>
+    <div class="sub">SYNTHETIC DATA · NO LIVE ORDERS</div>
+  </div>
+</div>
+<div class="warning">
+  SIMULATION ONLY — all prices, orders, trades, and latency values
+  are generated locally. No broker or exchange connection.
+</div>
+""", unsafe_allow_html=True)
 
-filled_orders = (
-    int((orders["status"] == "FILLED").sum())
-    if not orders.empty else 0
-)
 
-fill_rate = (
-    filled_orders / order_count * 100
-    if order_count else 0
+# ---------------- LOAD DATA ----------------
+
+last_price = st.session_state.prices[symbol]
+
+orders = query_df("""
+    SELECT *
+    FROM orders
+    WHERE symbol = ?
+    ORDER BY rowid DESC
+    LIMIT 500
+""", (symbol,))
+
+trades = query_df("""
+    SELECT *
+    FROM trades
+    WHERE symbol = ?
+    ORDER BY rowid DESC
+    LIMIT 500
+""", (symbol,))
+
+prices = query_df("""
+    SELECT *
+    FROM price_history
+    WHERE symbol = ?
+    ORDER BY id DESC
+    LIMIT 300
+""", (symbol,))
+
+latencies_ms = (
+    orders["latency_us"].fillna(0) / 1000
+    if not orders.empty else pd.Series(dtype=float)
 )
 
 trade_volume = (
-    int(trades["quantity"].sum())
+    int(trades["quantity"].fillna(0).sum())
     if not trades.empty else 0
 )
 
 avg_latency = (
-    float(trades["latency_ms"].mean())
-    if not trades.empty else 0.0
+    float(latencies_ms.mean())
+    if not latencies_ms.empty else 0.0
 )
 
-# ==========================================================
-# HEADER
-# ==========================================================
+
+# ---------------- METRICS ----------------
 
 st.markdown(
-    """
-    <div class="terminal-title">
-        ChronosMatch <span style="color:#28d9a2">/</span>
-        Market Terminal
-    </div>
-    <div class="terminal-sub">
-        Order matching · Market depth · Execution analytics
-    </div>
-    <br>
-    <span class="sim-badge">● SYNTHETIC DATA · SIMULATION ONLY</span>
-    <hr style="border-color:#20324a">
-    """,
+    '<div class="section">SYSTEM OVERVIEW</div>',
     unsafe_allow_html=True,
 )
 
-# ==========================================================
-# TOP METRICS
-# ==========================================================
+metrics = st.columns(4)
 
-m1, m2, m3, m4, m5 = st.columns(5)
+metric_values = [
+    ("LAST SIM PRICE", f"${last_price:,.2f}", symbol),
+    ("SIMULATED TRADES", f"{len(trades):,}", "Recorded fills"),
+    ("EXECUTED VOLUME", f"{trade_volume:,}", "Units"),
+    ("AVG PROCESSING", f"{avg_latency:.3f} ms", "Local measurement"),
+]
 
-m1.metric(f"{symbol} price", money(price))
-m2.metric("Total orders", f"{order_count:,}")
-m3.metric("Executed trades", f"{trade_count:,}")
-m4.metric("Filled-order rate", f"{fill_rate:.1f}%")
-m5.metric("Avg match latency", f"{avg_latency:.2f} ms")
-
-# ==========================================================
-# PRICE CHART
-# ==========================================================
-
-left, right = st.columns([1.6, 1])
-
-with left:
-    st.subheader("Price movement")
-
-    if not ticks.empty:
-        fig = go.Figure()
-
-        fig.add_trace(go.Scatter(
-            x=ticks["timestamp"],
-            y=ticks["price"],
-            mode="lines",
-            line=dict(color="#28d9a2", width=2),
-            fill="tozeroy",
-            fillcolor="rgba(40,217,162,0.07)",
-            name="Synthetic price",
-        ))
-
-        low = float(ticks["price"].min())
-        high = float(ticks["price"].max())
-        padding = max((high - low) * 0.20, 0.10)
-
-        fig.update_layout(
-            template="plotly_dark",
-            height=330,
-            margin=dict(l=10, r=10, t=20, b=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="#0b1422",
-            xaxis_title=None,
-            yaxis_title="Price ($)",
-            showlegend=False,
+for col, (label, value, note) in zip(metrics, metric_values):
+    with col:
+        st.markdown(
+            f'<div class="card">'
+            f'<div class="label">{label}</div>'
+            f'<div class="value">{value}</div>'
+            f'<div class="note">{note}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
         )
 
-        # Zoom in around the actual price range.
-        fig.update_yaxes(
-            gridcolor="#20324a",
-            range=[low - padding, high + padding],
-            tickprefix="$",
+
+# ---------------- ORDER ENTRY ----------------
+
+st.markdown(
+    '<div class="section">01 / ORDER ENTRY & MARKET DEPTH</div>',
+    unsafe_allow_html=True,
+)
+
+entry_col, book_col = st.columns([0.8, 1.5], gap="large")
+
+with entry_col:
+    with st.container(border=True):
+        side = st.radio("Order side", ["BUY", "SELL"], horizontal=True)
+
+        quantity = st.number_input(
+            "Quantity",
+            min_value=1,
+            max_value=1_000_000,
+            value=100,
+            step=10,
         )
-        fig.update_xaxes(showgrid=False)
 
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Waiting for simulated price ticks.")
+        limit_price = st.number_input(
+            "Limit price ($)",
+            min_value=0.01,
+            value=float(last_price),
+            step=0.01,
+            format="%.2f",
+        )
 
-# ==========================================================
-# MARKET SNAPSHOT
-# ==========================================================
+        if st.button(
+            "SUBMIT SIMULATED ORDER",
+            type="primary",
+            width="stretch",
+        ):
+            oid, status, remaining, latency_us = submit_order(
+                symbol, side, int(quantity), float(limit_price)
+            )
 
-with right:
-    st.subheader("Market snapshot")
+            st.success(
+                f"{status} · Order {oid} · Remaining {remaining}"
+            )
+            st.caption(
+                f"Local processing: {latency_us / 1000:.3f} ms"
+            )
+            st.rerun()
 
-    book = read_df("""
-        SELECT side, price, quantity, filled_quantity
-        FROM sim_orders
-        WHERE symbol=?
+
+# ---------------- ORDER BOOK ----------------
+
+with book_col:
+    bids = query_df("""
+        SELECT price,
+               SUM(remaining) AS quantity,
+               COUNT(*) AS orders
+        FROM orders
+        WHERE symbol = ?
+          AND side = 'BUY'
           AND status IN ('OPEN', 'PARTIAL')
+          AND remaining > 0
+        GROUP BY price
+        ORDER BY price DESC
+        LIMIT 10
     """, (symbol,))
 
-    best_bid = None
-    best_ask = None
-
-    if not book.empty:
-        book["remaining"] = (
-            book["quantity"] - book["filled_quantity"]
-        ).clip(lower=0)
-
-        book = book[book["remaining"] > 0]
-        bids = book[book["side"] == "BUY"]
-        asks = book[book["side"] == "SELL"]
-
-        if not bids.empty:
-            best_bid = float(bids["price"].max())
-
-        if not asks.empty:
-            best_ask = float(asks["price"].min())
-
-    spread = (
-        best_ask - best_bid
-        if best_bid is not None and best_ask is not None
-        else None
-    )
-
-    a, b = st.columns(2)
-    a.metric("Best bid", money(best_bid) if best_bid is not None else "—")
-    b.metric("Best ask", money(best_ask) if best_ask is not None else "—")
-
-    st.metric("Bid/ask spread", money(spread) if spread is not None else "—")
-    st.metric("Executed quantity", f"{trade_volume:,}")
-
-# ==========================================================
-# TABS
-# ==========================================================
-
-tab_book, tab_tape, tab_analytics, tab_orders, tab_export = st.tabs([
-    "Order book",
-    "Trade tape",
-    "Analytics",
-    "Order history",
-    "CSV export",
-])
-
-# ==========================================================
-# ORDER BOOK
-# ==========================================================
-
-with tab_book:
-    st.subheader("Market depth")
-
-    if not book.empty:
-        bids = (
-            book[book["side"] == "BUY"]
-            .groupby("price", as_index=False)["remaining"]
-            .sum()
-            .sort_values("price", ascending=False)
-            .head(12)
-            .rename(columns={
-                "price": "Bid price ($)",
-                "remaining": "Remaining quantity",
-            })
-        )
-
-        asks = (
-            book[book["side"] == "SELL"]
-            .groupby("price", as_index=False)["remaining"]
-            .sum()
-            .sort_values("price")
-            .head(12)
-            .rename(columns={
-                "price": "Ask price ($)",
-                "remaining": "Remaining quantity",
-            })
-        )
-    else:
-        bids = pd.DataFrame(columns=["Bid price ($)", "Remaining quantity"])
-        asks = pd.DataFrame(columns=["Ask price ($)", "Remaining quantity"])
+    asks = query_df("""
+        SELECT price,
+               SUM(remaining) AS quantity,
+               COUNT(*) AS orders
+        FROM orders
+        WHERE symbol = ?
+          AND side = 'SELL'
+          AND status IN ('OPEN', 'PARTIAL')
+          AND remaining > 0
+        GROUP BY price
+        ORDER BY price ASC
+        LIMIT 10
+    """, (symbol,))
 
     bid_col, ask_col = st.columns(2)
 
     with bid_col:
-        st.markdown("### 🟢 BUY ORDERS")
+        st.markdown("**BIDS · BUY**")
         if bids.empty:
-            st.info("No resting buy orders.")
+            st.info("No resting bids.")
         else:
-            st.dataframe(bids, hide_index=True, use_container_width=True)
+            bids["price"] = bids["price"].map(lambda x: f"${x:,.2f}")
+            bids.columns = ["Price", "Quantity", "Orders"]
+            st.dataframe(
+                bids, hide_index=True, width="stretch", height=280
+            )
 
     with ask_col:
-        st.markdown("### 🔴 SELL ORDERS")
+        st.markdown("**ASKS · SELL**")
         if asks.empty:
-            st.info("No resting sell orders.")
+            st.info("No resting asks.")
         else:
-            st.dataframe(asks, hide_index=True, use_container_width=True)
-
-# ==========================================================
-# TRADE TAPE
-# ==========================================================
-
-with tab_tape:
-    st.subheader("Recent simulated executions")
-
-    if trades.empty:
-        st.info("Waiting for simulated trades.")
-    else:
-        tape = trades.head(100).copy()
-        tape["timestamp"] = pd.to_datetime(
-            tape["timestamp"], errors="coerce"
-        ).dt.strftime("%H:%M:%S.%f").str[:-3]
-
-        tape = tape.rename(columns={
-            "trade_id": "Trade ID",
-            "timestamp": "Time",
-            "symbol": "Symbol",
-            "price": "Price ($)",
-            "quantity": "Quantity",
-            "buy_order_id": "Buy order ID",
-            "sell_order_id": "Sell order ID",
-            "latency_ms": "Latency (ms)",
-        })
-
-        st.dataframe(
-            tape,
-            hide_index=True,
-            use_container_width=True,
-            height=400,
-        )
-
-        st.download_button(
-            "Download trade tape CSV",
-            csv_data(tape),
-            "chronosmatch_trade_tape.csv",
-            "text/csv",
-        )
-
-# ==========================================================
-# ANALYTICS
-# ==========================================================
-
-with tab_analytics:
-    st.subheader("Execution analytics")
-
-    a, b, c, d = st.columns(4)
-
-    a.metric("Executed volume", f"{trade_volume:,}")
-    b.metric(
-        "Average trade price",
-        money(trades["price"].mean()) if not trades.empty else "—",
-    )
-    c.metric("Average latency", f"{avg_latency:.2f} ms")
-    d.metric("Fully filled orders", f"{filled_orders:,}")
-
-    if not trades.empty:
-        chart = trades.copy()
-        chart["timestamp"] = pd.to_datetime(
-            chart["timestamp"], errors="coerce"
-        )
-        chart = chart.dropna(subset=["timestamp"]).sort_values("timestamp")
-
-        if not chart.empty:
-            volume_fig = px.bar(
-                chart.tail(80),
-                x="timestamp",
-                y="quantity",
-                title="Recent executed quantity",
-                labels={
-                    "timestamp": "Time",
-                    "quantity": "Quantity",
-                },
+            asks["price"] = asks["price"].map(lambda x: f"${x:,.2f}")
+            asks.columns = ["Price", "Quantity", "Orders"]
+            st.dataframe(
+                asks, hide_index=True, width="stretch", height=280
             )
-            volume_fig.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="#0b1422",
-            )
-            st.plotly_chart(volume_fig, use_container_width=True)
 
-        latency_fig = px.histogram(
-            trades,
-            x="latency_ms",
-            nbins=20,
-            title="Simulated matching latency distribution",
-            labels={"latency_ms": "Latency (ms)"},
-        )
-        latency_fig.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="#0b1422",
-        )
-        st.plotly_chart(latency_fig, use_container_width=True)
-    else:
-        st.info("Analytics will appear as simulated trades are created.")
 
-# ==========================================================
-# ORDER HISTORY
-# ==========================================================
-
-with tab_orders:
-    st.subheader("Recent order history")
-
-    if orders.empty:
-        st.info("No orders recorded.")
-    else:
-        order_view = orders.copy().rename(columns={
-            "order_id": "Order ID",
-            "timestamp": "Timestamp",
-            "symbol": "Symbol",
-            "side": "Side",
-            "price": "Limit price ($)",
-            "quantity": "Quantity",
-            "filled_quantity": "Filled",
-            "remaining": "Remaining",
-            "status": "Status",
-            "latency_us": "Latency (µs)",
-        })
-
-        st.dataframe(
-            order_view,
-            hide_index=True,
-            use_container_width=True,
-            height=400,
-        )
-
-        st.download_button(
-            "Download order history CSV",
-            csv_data(order_view),
-            "chronosmatch_orders.csv",
-            "text/csv",
-        )
-
-# ==========================================================
-# CSV EXPORT
-# ==========================================================
-
-with tab_export:
-    st.subheader("Export simulation records")
-
-    all_orders = read_df("""
-        SELECT order_id, timestamp, symbol, side, price,
-               quantity, filled_quantity, status, latency_us
-        FROM sim_orders
-        ORDER BY rowid DESC
-        LIMIT 1500
-    """)
-
-    all_trades = read_df("""
-        SELECT trade_id, timestamp, symbol, price, quantity,
-               buy_order_id, sell_order_id, latency_us, latency_ms
-        FROM sim_trades
-        ORDER BY rowid DESC
-        LIMIT 1500
-    """)
-
-    x, y = st.columns(2)
-
-    with x:
-        st.markdown("### Orders")
-        st.write(f"{len(all_orders)} records")
-        st.download_button(
-            "Export all orders",
-            csv_data(all_orders),
-            "chronosmatch_all_orders.csv",
-            "text/csv",
-            use_container_width=True,
-        )
-
-    with y:
-        st.markdown("### Trades")
-        st.write(f"{len(all_trades)} records")
-        st.download_button(
-            "Export all trades",
-            csv_data(all_trades),
-            "chronosmatch_all_trades.csv",
-            "text/csv",
-            use_container_width=True,
-        )
-
-    st.caption("CSV exports contain simulation records only.")
-
-# ==========================================================
-# FOOTER
-# ==========================================================
+# ---------------- PERFORMANCE CHARTS ----------------
 
 st.markdown(
-    """
-    <hr style="border-color:#20324a">
-    <div style="color:#7f93ae;font-size:12px">
-        CHRONOSMATCH · EDUCATIONAL HFT SIMULATION
-        · Synthetic prices and orders
-        · No live exchange or broker connection
-    </div>
-    """,
+    '<div class="section">02 / PERFORMANCE ANALYTICS</div>',
     unsafe_allow_html=True,
+)
+
+chart_left, chart_right = st.columns(2, gap="large")
+
+with chart_left:
+    st.markdown("**SIMULATED PRICE HISTORY**")
+    if not prices.empty:
+        plot = prices.copy()
+        plot["Time"] = pd.to_datetime(
+            plot["created_at"], errors="coerce"
+        )
+        plot = plot.dropna(subset=["Time"]).sort_values("Time")
+        plot = plot.set_index("Time")[["price"]]
+        st.line_chart(plot, height=260, width="stretch")
+    else:
+        st.info("Price history appears as simulation runs.")
+
+with chart_right:
+    st.markdown("**EXECUTION VOLUME**")
+    if not trades.empty:
+        plot = trades.copy()
+        plot["Time"] = pd.to_datetime(
+            plot["created_at"], errors="coerce"
+        )
+        plot = plot.dropna(subset=["Time"]).sort_values("Time")
+        plot = plot.set_index("Time")[["quantity"]]
+        st.bar_chart(plot, height=260, width="stretch")
+    else:
+        st.info("Volume chart appears after simulated fills.")
+
+
+# ---------------- LATENCY MONITOR ----------------
+
+st.markdown(
+    '<div class="section">03 / LATENCY MONITOR</div>',
+    unsafe_allow_html=True,
+)
+
+lat_left, lat_right = st.columns([1, 2], gap="large")
+
+p50 = (
+    float(latencies_ms.quantile(0.50))
+    if not latencies_ms.empty else 0.0
+)
+p95 = (
+    float(latencies_ms.quantile(0.95))
+    if not latencies_ms.empty else 0.0
+)
+p99 = (
+    float(latencies_ms.quantile(0.99))
+    if not latencies_ms.empty else 0.0
+)
+
+with lat_left:
+    st.markdown(
+        f'<div class="card">'
+        f'<div class="label">P50 PROCESSING</div>'
+        f'<div class="value">{p50:.3f} ms</div>'
+        f'<div class="label">P95 PROCESSING</div>'
+        f'<div class="value">{p95:.3f} ms</div>'
+        f'<div class="label">P99 PROCESSING</div>'
+        f'<div class="value">{p99:.3f} ms</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+with lat_right:
+    if not orders.empty:
+        latency_plot = orders.head(100).copy()
+        latency_plot["Sequence"] = range(len(latency_plot), 0, -1)
+        latency_plot = latency_plot.sort_values("Sequence")
+        latency_plot["latency_ms"] = (
+            latency_plot["latency_us"].fillna(0) / 1000
+        )
+        latency_plot = latency_plot.set_index("Sequence")[["latency_ms"]]
+        st.line_chart(latency_plot, height=240, width="stretch")
+    else:
+        st.info("Latency values appear as orders are submitted.")
+
+    st.caption(
+        "Local Python/SQLite processing time, not exchange or network latency."
+    )
+
+
+# ---------------- TRADE FEED ----------------
+
+st.markdown(
+    '<div class="section">04 / SIMULATED TRADE FEED</div>',
+    unsafe_allow_html=True,
+)
+
+if not trades.empty:
+    tape = trades.head(30).copy()
+    tape = tape.rename(columns={
+        "created_at": "Time",
+        "id": "Trade ID",
+        "symbol": "Symbol",
+        "price": "Price",
+        "quantity": "Quantity",
+        "buy_order_id": "Buy Order",
+        "sell_order_id": "Sell Order",
+        "latency_us": "Latency (us)",
+    })
+
+    columns = [
+        c for c in [
+            "Time", "Trade ID", "Symbol", "Price", "Quantity",
+            "Buy Order", "Sell Order", "Latency (us)"
+        ] if c in tape.columns
+    ]
+
+    st.dataframe(
+        tape[columns],
+        hide_index=True,
+        width="stretch",
+    )
+else:
+    st.info(
+        "No trades yet. A trade is created when buy and sell prices cross."
+    )
+
+
+# ---------------- ORDER AUDIT ----------------
+
+with st.expander("Order history and audit trail"):
+    if not orders.empty:
+        st.dataframe(
+            orders.head(100),
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        st.info("No orders recorded yet.")
+
+st.divider()
+
+st.caption(
+    "CHRONOSMATCH INSTITUTIONAL · SIMULATION ONLY · NO LIVE TRADING"
 )
