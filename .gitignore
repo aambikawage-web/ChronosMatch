@@ -230,3 +230,7 @@ __marimo__/
 !.env.example
 upstox_sandbox_test.py
 .env
+
+# Local dashboard backups
+app_backup_before_advanced_dashboard.py
+app_backup_before_modern_ui.py
