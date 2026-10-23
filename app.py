@@ -614,11 +614,11 @@ with st.sidebar:
     )
 
     if st.session_state.auto_run:
-        if st.button("⏹ Stop simulation", use_container_width=True):
+        if st.button("⏹ Stop simulation", width="stretch"):
             st.session_state.auto_run = False
             st.rerun()
     else:
-        if st.button("▶ Start simulation", use_container_width=True):
+        if st.button("▶ Start simulation", width="stretch"):
             st.session_state.auto_run = True
             st.rerun()
 
