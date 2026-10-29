@@ -1,4 +1,3 @@
-
 from pathlib import Path
 from datetime import datetime
 import time
@@ -6,10 +5,10 @@ import time
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
 
 import database
 from chronosmatch import ChronosMatch
+from upstox_adapter import PaperTrader
 
 
 # ============================================================
@@ -17,11 +16,7 @@ from chronosmatch import ChronosMatch
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
-
-# Preserve the old dashboard database.
 DASHBOARD_DB_PATH = BASE_DIR / "chronosmatch_simulation.db"
-
-# Dedicated AAPL matching-engine database.
 ENGINE_DB_PATH = BASE_DIR / "chronosmatch_aapl.db"
 
 DEFAULT_SYMBOL = "AAPL"
@@ -29,7 +24,6 @@ DEFAULT_PRICE = 100.00
 MAX_ORDER_QUANTITY = 1000
 MAX_ORDER_VALUE = 100000.00
 
-# Set this before creating ChronosMatch().
 database.DB_NAME = ENGINE_DB_PATH
 database.create_tables()
 
@@ -51,6 +45,7 @@ DEFAULTS = {
     "last_order_status": "success",
     "latency_samples": [],
     "submitted_count": 0,
+    "paper_trader": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -59,18 +54,22 @@ for key, value in DEFAULTS.items():
 
 
 def get_engine():
-    """Create one matching-engine instance per Streamlit session."""
     if st.session_state.engine is None:
         st.session_state.engine = ChronosMatch()
     return st.session_state.engine
 
 
+def get_paper_trader():
+    if st.session_state.paper_trader is None:
+        st.session_state.paper_trader = PaperTrader()
+    return st.session_state.paper_trader
+
+
 # ============================================================
-# 3. DATABASE-DRIVEN DATA FUNCTIONS
+# 3. DATABASE DATA FUNCTIONS
 # ============================================================
 
 def orders_dataframe():
-    """Load persisted orders from the ChronosMatch database."""
     rows = database.get_all_orders()
     records = []
 
@@ -99,7 +98,6 @@ def orders_dataframe():
 
 
 def trades_dataframe():
-    """Load persisted executions from the ChronosMatch database."""
     rows = database.get_all_trades()
     records = []
 
@@ -118,13 +116,13 @@ def trades_dataframe():
     return pd.DataFrame(
         records,
         columns=[
-            "Trade ID", "Symbol", "Price", "Quantity", "Notional",
+            "Trade ID", "Symbol", "Price",
+            "Quantity", "Notional",
         ],
     )
 
 
 def open_orders_dataframe():
-    """Load the current open and partially filled orders."""
     rows = database.get_active_orders()
     records = []
 
@@ -139,7 +137,9 @@ def open_orders_dataframe():
 
     return pd.DataFrame(
         records,
-        columns=["Order ID", "Symbol", "Side", "Price", "Remaining"],
+        columns=[
+            "Order ID", "Symbol", "Side", "Price", "Remaining",
+        ],
     )
 
 
@@ -169,7 +169,6 @@ def display_message():
 # ============================================================
 
 def submit_simulation_order(side, price, quantity):
-    """Validate and submit a simulated order to ChronosMatch."""
     side = str(side).upper()
     price = float(price)
     quantity = int(quantity)
@@ -195,7 +194,8 @@ def submit_simulation_order(side, price, quantity):
 
     if price * quantity > MAX_ORDER_VALUE:
         set_message(
-            f"Order value cannot exceed {format_money(MAX_ORDER_VALUE)}.",
+            f"Order value cannot exceed "
+            f"{format_money(MAX_ORDER_VALUE)}.",
             "error",
         )
         return
@@ -204,7 +204,6 @@ def submit_simulation_order(side, price, quantity):
     start = time.perf_counter()
 
     try:
-        # Your engine expects lowercase 'buy' or 'sell'.
         order = engine.submit_order(
             side.lower(),
             price,
@@ -294,13 +293,6 @@ st.markdown(
         color: #9ca3af;
         font-size: 14px;
     }
-
-    .section-label {
-        color: #9ca3af;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -325,6 +317,7 @@ page = st.sidebar.radio(
         "Performance Lab",
         "Risk Monitor",
         "Backtesting",
+        "Paper Trading",
     ],
 )
 
@@ -333,11 +326,9 @@ st.sidebar.markdown("### Active Instrument")
 st.sidebar.info("AAPL — Apple Inc.")
 st.sidebar.caption("Mode: Local simulation")
 st.sidebar.caption("Database: chronosmatch_aapl.db")
-
 st.sidebar.warning(
     "Simulation only. No live broker orders are sent."
 )
-
 st.sidebar.markdown("---")
 st.sidebar.caption("ChronosMatch | Local matching engine")
 
@@ -372,7 +363,6 @@ chart_template = "plotly_dark"
 # ============================================================
 
 if page == "Terminal Overview":
-
     st.title("📈 Terminal Overview")
     st.markdown(
         '<p class="subtitle">AAPL order matching powered by '
@@ -383,14 +373,12 @@ if page == "Terminal Overview":
     display_message()
 
     c1, c2, c3, c4 = st.columns(4)
-
     c1.metric("Orders Submitted", total_orders)
     c2.metric("Orders Fully Filled", filled_count)
     c3.metric("Executed Trades", total_trades)
     c4.metric("Open Orders", open_count)
 
     st.markdown("---")
-
     left, right = st.columns([1.5, 1])
 
     with left:
@@ -458,7 +446,6 @@ if page == "Terminal Overview":
 # ============================================================
 
 elif page == "Order Entry":
-
     st.title("📝 Order Entry")
     st.markdown(
         '<p class="subtitle">Submit simulated AAPL orders.</p>',
@@ -470,10 +457,12 @@ elif page == "Order Entry":
     c1, c2, c3 = st.columns(3)
     c1.metric("Instrument", DEFAULT_SYMBOL)
     c2.metric("Maximum Quantity", MAX_ORDER_QUANTITY)
-    c3.metric("Maximum Order Value", format_money(MAX_ORDER_VALUE))
+    c3.metric(
+        "Maximum Order Value",
+        format_money(MAX_ORDER_VALUE),
+    )
 
     st.markdown("---")
-
     buy_col, sell_col = st.columns(2)
 
     with buy_col:
@@ -552,7 +541,6 @@ elif page == "Order Entry":
 
     st.markdown("---")
     st.subheader("Pre-trade Validation")
-
     st.markdown(
         """
         - Only AAPL is enabled.
@@ -566,21 +554,22 @@ elif page == "Order Entry":
 
 
 # ============================================================
-# 10. MARKET DEPTH
+# 10. MARKET DEPTH AND ORDER CANCELLATION
 # ============================================================
 
 elif page == "Market Depth":
-
     st.title("📊 Market Depth")
     st.markdown(
         '<p class="subtitle">Current active orders in the engine.</p>',
         unsafe_allow_html=True,
     )
 
+    display_message()
     open_df = open_orders_dataframe()
 
     if open_df.empty:
         st.info("There are no open or partially filled orders.")
+
     else:
         buy_orders = open_df[open_df["Side"] == "BUY"]
         sell_orders = open_df[open_df["Side"] == "SELL"]
@@ -655,15 +644,95 @@ elif page == "Market Depth":
 
         st.markdown("---")
         st.subheader("All Active Orders")
-
         st.dataframe(
             open_df,
             use_container_width=True,
             hide_index=True,
         )
 
+        st.markdown("---")
+        st.subheader("Cancel an Active Order")
+
+        order_options = open_df["Order ID"].astype(int).tolist()
+
+        def format_order_option(order_id):
+            selected = open_df[
+                open_df["Order ID"].astype(int) == int(order_id)
+            ].iloc[0]
+
+            return (
+                f"Order #{int(order_id)} | "
+                f"{selected['Side']} | "
+                f"${selected['Price']:,.2f} | "
+                f"Remaining: {int(selected['Remaining'])}"
+            )
+
+        selected_order_id = st.selectbox(
+            "Select an open order",
+            options=order_options,
+            format_func=format_order_option,
+            key="cancel_order_select",
+        )
+
+        st.warning(
+            "Cancellation removes the remaining quantity from the "
+            "active order book. Trades already executed cannot "
+            "be undone."
+        )
+
+        confirm_cancel = st.checkbox(
+            "I confirm that I want to cancel this order.",
+            key="confirm_cancel_order",
+        )
+
+        if st.button(
+            "Cancel Selected Order",
+            key="cancel_selected_order",
+            disabled=not confirm_cancel,
+            use_container_width=True,
+        ):
+            try:
+                latest_open_df = open_orders_dataframe()
+                latest_order_ids = (
+                    latest_open_df["Order ID"].astype(int).tolist()
+                )
+
+                if int(selected_order_id) not in latest_order_ids:
+                    set_message(
+                        f"Order #{selected_order_id} is no longer active. "
+                        "Refresh the page and select another order.",
+                        "error",
+                    )
+                else:
+                    engine = get_engine()
+                    cancelled = engine.cancel_order(
+                        int(selected_order_id)
+                    )
+
+                    if cancelled:
+                        set_message(
+                            f"Order #{selected_order_id} cancelled "
+                            "successfully."
+                        )
+                    else:
+                        set_message(
+                            f"Order #{selected_order_id} could not be "
+                            "cancelled. It may already be filled or "
+                            "cancelled.",
+                            "error",
+                        )
+
+            except Exception as exc:
+                set_message(
+                    f"Cancellation failed: {exc}",
+                    "error",
+                )
+
+            st.rerun()
+
     st.caption(
-        "Depth is derived from persisted active orders, not live exchange data."
+        "Depth is derived from persisted active orders, not live "
+        "exchange data. This dashboard operates in simulation mode."
     )
 
 
@@ -672,7 +741,6 @@ elif page == "Market Depth":
 # ============================================================
 
 elif page == "Trade History":
-
     st.title("📚 Trade History")
     st.markdown(
         '<p class="subtitle">Persisted executions from ChronosMatch.</p>',
@@ -683,9 +751,9 @@ elif page == "Trade History":
 
     if trades_df.empty:
         st.info("No trades have been executed yet.")
+
     else:
         c1, c2, c3 = st.columns(3)
-
         c1.metric("Executed Trades", len(trades_df))
         c2.metric(
             "Total Shares Traded",
@@ -697,7 +765,6 @@ elif page == "Trade History":
         )
 
         st.markdown("---")
-
         st.dataframe(
             trades_df,
             use_container_width=True,
@@ -719,7 +786,6 @@ elif page == "Trade History":
 # ============================================================
 
 elif page == "Performance Lab":
-
     st.title("⚡ Performance Lab")
     st.markdown(
         '<p class="subtitle">Local order-processing measurements.</p>',
@@ -731,9 +797,8 @@ elif page == "Performance Lab":
     )
 
     if latency_df.empty:
-        st.info(
-            "Submit orders to collect latency measurements."
-        )
+        st.info("Submit orders to collect latency measurements.")
+
     else:
         average_latency = latency_df["Latency (ms)"].mean()
         minimum_latency = latency_df["Latency (ms)"].min()
@@ -776,7 +841,6 @@ elif page == "Performance Lab":
 # ============================================================
 
 elif page == "Risk Monitor":
-
     st.title("🛡️ Risk Monitor")
     st.markdown(
         '<p class="subtitle">Basic pre-trade limits and order exposure.</p>',
@@ -787,16 +851,12 @@ elif page == "Risk Monitor":
     open_df = open_orders_dataframe()
 
     submitted_notional = (
-        float(
-            (orders_df["Price"] * orders_df["Quantity"]).sum()
-        )
+        float((orders_df["Price"] * orders_df["Quantity"]).sum())
         if not orders_df.empty else 0.0
     )
 
     open_notional = (
-        float(
-            (open_df["Price"] * open_df["Remaining"]).sum()
-        )
+        float((open_df["Price"] * open_df["Remaining"]).sum())
         if not open_df.empty else 0.0
     )
 
@@ -860,7 +920,6 @@ elif page == "Risk Monitor":
 # ============================================================
 
 elif page == "Backtesting":
-
     st.title("🧪 Backtesting")
     st.markdown(
         '<p class="subtitle">Analysis of recorded simulated executions.</p>',
@@ -870,12 +929,10 @@ elif page == "Backtesting":
     trades_df = trades_dataframe()
 
     if trades_df.empty:
-        st.info(
-            "No executed trades are available for analysis."
-        )
+        st.info("No executed trades are available for analysis.")
+
     else:
         c1, c2, c3 = st.columns(3)
-
         c1.metric("Trade Records", len(trades_df))
         c2.metric(
             "Total Shares",
@@ -888,7 +945,6 @@ elif page == "Backtesting":
 
         st.markdown("---")
         st.subheader("Recorded Executions")
-
         st.dataframe(
             trades_df,
             use_container_width=True,
@@ -914,7 +970,6 @@ elif page == "Backtesting":
 
     st.markdown("---")
     st.subheader("Scope")
-
     st.markdown(
         """
         This page analyzes trades stored by the matching engine.
@@ -926,11 +981,128 @@ elif page == "Backtesting":
 
 
 # ============================================================
-# 15. FOOTER
+# 15. PAPER TRADING — SIMULATION ONLY
+# ============================================================
+
+elif page == "Paper Trading":
+    st.title("🧪 Paper Trading")
+
+    st.warning(
+        "SIMULATION ONLY — No Upstox API requests, live market data, "
+        "or real broker orders are used on this page."
+    )
+
+    trader = get_paper_trader()
+
+    st.subheader("Place a Simulated Order")
+
+    with st.form("paper_trading_order_form"):
+        symbol = st.text_input(
+            "Symbol",
+            value="DEMO",
+        ).strip().upper()
+
+        side = st.selectbox(
+            "Side",
+            ["BUY", "SELL"],
+        )
+
+        quantity = st.number_input(
+            "Quantity",
+            min_value=1,
+            max_value=MAX_ORDER_QUANTITY,
+            value=1,
+            step=1,
+        )
+
+        price = st.number_input(
+            "Simulated Price",
+            min_value=0.01,
+            max_value=MAX_ORDER_VALUE,
+            value=100.00,
+            step=1.00,
+        )
+
+        order_value = float(quantity) * float(price)
+        st.caption(
+            f"Simulated order value: {format_money(order_value)}"
+        )
+
+        submitted = st.form_submit_button(
+            "Place Paper Order",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted:
+        if order_value > MAX_ORDER_VALUE:
+            st.error(
+                f"Order value cannot exceed "
+                f"{format_money(MAX_ORDER_VALUE)}."
+            )
+        else:
+            try:
+                order = trader.place_order(
+                    symbol=symbol,
+                    side=side,
+                    quantity=int(quantity),
+                    price=float(price),
+                )
+
+                st.success("Paper order completed successfully.")
+                st.json(order)
+
+            except (ValueError, RuntimeError) as exc:
+                st.error(str(exc))
+
+    st.markdown("---")
+    st.subheader("Paper Order History")
+
+    paper_orders = trader.get_orders()
+    paper_df = pd.DataFrame(paper_orders)
+
+    if paper_df.empty:
+        st.info("No simulated paper orders yet.")
+    else:
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric("Paper Orders", len(paper_df))
+        c2.metric(
+            "Simulated Order Value",
+            format_money(paper_df["simulated_value"].sum()),
+        )
+        c3.metric(
+            "Simulated Quantity",
+            int(paper_df["quantity"].sum()),
+        )
+
+        st.dataframe(
+            paper_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv_data = paper_df.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            "Download Paper Order History",
+            data=csv_data,
+            file_name="chronosmatch_paper_orders.csv",
+            mime="text/csv",
+        )
+
+    st.caption(
+        "Paper orders exist only in the current Streamlit session. "
+        "They are not sent to Upstox and are not saved to the "
+        "ChronosMatch matching-engine database."
+    )
+
+
+# ============================================================
+# 16. FOOTER
 # ============================================================
 
 st.markdown("---")
-
 st.caption(
     "ChronosMatch HFT Terminal | AAPL | Local simulation | "
     "Persistent SQLite engine database"
