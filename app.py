@@ -9,6 +9,7 @@ import plotly.express as px
 import database
 from chronosmatch import ChronosMatch
 from upstox_adapter import PaperTrader
+from upstox_local_simulator import UpstoxLocalSimulator
 
 
 # ============================================================
@@ -46,6 +47,7 @@ DEFAULTS = {
     "latency_samples": [],
     "submitted_count": 0,
     "paper_trader": None,
+    "upstox_simulator": None,
 }
 
 for key, value in DEFAULTS.items():
@@ -63,6 +65,12 @@ def get_paper_trader():
     if st.session_state.paper_trader is None:
         st.session_state.paper_trader = PaperTrader()
     return st.session_state.paper_trader
+
+
+def get_upstox_simulator():
+    if st.session_state.upstox_simulator is None:
+        st.session_state.upstox_simulator = UpstoxLocalSimulator()
+    return st.session_state.upstox_simulator
 
 
 # ============================================================
@@ -318,6 +326,7 @@ page = st.sidebar.radio(
         "Risk Monitor",
         "Backtesting",
         "Paper Trading",
+        "Upstox Simulator",
     ],
 )
 
@@ -356,8 +365,6 @@ total_notional = (
 )
 
 chart_template = "plotly_dark"
-
-
 # ============================================================
 # 8. TERMINAL OVERVIEW
 # ============================================================
@@ -1096,14 +1103,351 @@ elif page == "Paper Trading":
         "They are not sent to Upstox and are not saved to the "
         "ChronosMatch matching-engine database."
     )
+    # ============================================================
+# 16. UPSTOX SIMULATOR — LOCAL SIMULATION ONLY
+# ============================================================
+
+elif page == "Upstox Simulator":
+
+    st.title("🚀 Upstox Simulator")
+
+    st.markdown(
+        '<p class="subtitle">'
+        'Local order placement, modification and cancellation simulator.'
+        '</p>',
+        unsafe_allow_html=True,
+    )
+
+    st.warning(
+        "LOCAL SIMULATION ONLY — This is not the official Upstox "
+        "sandbox. No Upstox API requests, authentication, live market "
+        "data or real broker orders are used."
+    )
+
+    simulator = get_upstox_simulator()
+
+    # --------------------------------------------------------
+    # Simulator status
+    # --------------------------------------------------------
+
+    st.subheader("Simulator Status")
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric("Environment", "LOCAL")
+    c2.metric("Broker Connection", "Disabled")
+    c3.metric("Real Orders", "Disabled")
+
+    st.markdown("---")
+
+    # --------------------------------------------------------
+    # Place a simulated order
+    # --------------------------------------------------------
+
+    st.subheader("📝 Place Simulated Order")
+
+    with st.form("upstox_local_order_form"):
+
+        symbol = st.text_input(
+            "Trading Symbol",
+            value="DEMO",
+        ).strip().upper()
+
+        side = st.selectbox(
+            "Order Side",
+            ["BUY", "SELL"],
+        )
+
+        order_type = st.selectbox(
+            "Order Type",
+            ["LIMIT", "MARKET"],
+        )
+
+        quantity = st.number_input(
+            "Quantity",
+            min_value=1,
+            max_value=MAX_ORDER_QUANTITY,
+            value=1,
+            step=1,
+        )
+
+        price = st.number_input(
+            "Simulated Price",
+            min_value=0.01,
+            max_value=MAX_ORDER_VALUE,
+            value=100.00,
+            step=1.00,
+        )
+
+        order_value = float(quantity) * float(price)
+
+        st.caption(
+            f"Simulated order value: {format_money(order_value)}"
+        )
+
+        place_clicked = st.form_submit_button(
+            "Place Local Simulated Order",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if place_clicked:
+
+        if not symbol:
+            st.error("Please enter a trading symbol.")
+
+        elif quantity > MAX_ORDER_QUANTITY:
+            st.error("Maximum order quantity exceeded.")
+
+        elif order_value > MAX_ORDER_VALUE:
+            st.error(
+                f"Order value cannot exceed "
+                f"{format_money(MAX_ORDER_VALUE)}."
+            )
+
+        else:
+            try:
+                new_order = simulator.place_order(
+                    symbol=symbol,
+                    side=side,
+                    quantity=int(quantity),
+                    price=float(price),
+                    order_type=order_type,
+                )
+
+                st.success("Local simulated order created successfully.")
+
+                st.json(new_order)
+
+            except (ValueError, TypeError, RuntimeError) as exc:
+                st.error(f"Order rejected: {exc}")
+
+            except Exception as exc:
+                st.error(f"Unexpected error: {exc}")
+
+    st.markdown("---")
+
+    # --------------------------------------------------------
+    # Order history
+    # --------------------------------------------------------
+
+    st.subheader("📋 Local Order History")
+
+    local_orders = simulator.get_orders()
+
+    local_df = pd.DataFrame(local_orders)
+
+    if local_df.empty:
+
+        st.info("No local simulated orders have been placed yet.")
+
+    else:
+
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric("Total Orders", len(local_df))
+
+        c2.metric(
+            "Open Orders",
+            int((local_df["status"] == "OPEN").sum()),
+        )
+
+        c3.metric(
+            "Cancelled Orders",
+            int((local_df["status"] == "CANCELLED").sum()),
+        )
+
+        st.dataframe(
+            local_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        csv_data = local_df.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            "Download Local Order History",
+            data=csv_data,
+            file_name="upstox_local_orders.csv",
+            mime="text/csv",
+        )
+
+    st.markdown("---")
+
+    # --------------------------------------------------------
+    # Modify an open order
+    # --------------------------------------------------------
+
+    st.subheader("✏️ Modify Local Order")
+
+    open_local_orders = [
+        order for order in local_orders
+        if order.get("status") == "OPEN"
+    ]
+
+    if not open_local_orders:
+
+        st.info("There are no OPEN local orders to modify.")
+
+    else:
+
+        order_ids = [
+            order["order_id"] for order in open_local_orders
+        ]
+
+        selected_modify_id = st.selectbox(
+            "Select order to modify",
+            order_ids,
+            key="local_modify_order",
+        )
+
+        with st.form("modify_local_order_form"):
+
+            modify_quantity = st.number_input(
+                "New Quantity",
+                min_value=1,
+                max_value=MAX_ORDER_QUANTITY,
+                value=1,
+                step=1,
+            )
+
+            modify_price = st.number_input(
+                "New Price",
+                min_value=0.01,
+                max_value=MAX_ORDER_VALUE,
+                value=100.00,
+                step=1.00,
+            )
+
+            modify_clicked = st.form_submit_button(
+                "Modify Local Order",
+                use_container_width=True,
+            )
+
+        if modify_clicked:
+
+            if modify_quantity * modify_price > MAX_ORDER_VALUE:
+
+                st.error("Modified order value exceeds the maximum limit.")
+
+            else:
+
+                try:
+
+                    updated_order = simulator.modify_order(
+                        selected_modify_id,
+                        quantity=int(modify_quantity),
+                        price=float(modify_price),
+                    )
+
+                    st.success("Local order modified successfully.")
+
+                    st.json(updated_order)
+
+                except (ValueError, TypeError, RuntimeError) as exc:
+
+                    st.error(f"Modification failed: {exc}")
+
+                except Exception as exc:
+
+                    st.error(f"Unexpected error: {exc}")
+
+    st.markdown("---")
+
+    # --------------------------------------------------------
+    # Cancel an open order
+    # --------------------------------------------------------
+
+    st.subheader("❌ Cancel Local Order")
+
+    # Refresh the order list after any changes.
+    local_orders = simulator.get_orders()
+
+    cancellable_orders = [
+        order for order in local_orders
+        if order.get("status") == "OPEN"
+    ]
+
+    if not cancellable_orders:
+
+        st.info("There are no OPEN local orders to cancel.")
+
+    else:
+
+        cancel_ids = [
+            order["order_id"] for order in cancellable_orders
+        ]
+
+        selected_cancel_id = st.selectbox(
+            "Select order to cancel",
+            cancel_ids,
+            key="local_cancel_order",
+        )
+
+        confirm_local_cancel = st.checkbox(
+            "I confirm cancellation of this local simulated order.",
+            key="confirm_local_cancel",
+        )
+
+        if st.button(
+            "Cancel Local Order",
+            disabled=not confirm_local_cancel,
+            use_container_width=True,
+        ):
+
+            try:
+
+                cancelled_order = simulator.cancel_order(
+                    selected_cancel_id
+                )
+
+                st.success("Local simulated order cancelled.")
+
+                st.json(cancelled_order)
+
+            except (ValueError, TypeError, RuntimeError) as exc:
+
+                st.error(f"Cancellation failed: {exc}")
+
+            except Exception as exc:
+
+                st.error(f"Unexpected error: {exc}")
+
+    st.markdown("---")
+
+    # --------------------------------------------------------
+    # Safety information
+    # --------------------------------------------------------
+
+    st.subheader("🔒 Simulation Safety")
+
+    st.markdown(
+        """
+        - Environment: Local simulation.
+        - Broker authentication: Not used.
+        - Upstox API connection: Not used.
+        - Live market data: Not used.
+        - Real-money trading: Not supported.
+        - Order placement: Local Python simulator only.
+        - Order modification: Local simulator only.
+        - Order cancellation: Local simulator only.
+        """
+    )
+
+    st.caption(
+        "Local simulator orders exist only in the current Streamlit "
+        "session. Restarting the session may clear the order history."
+    )
 
 
 # ============================================================
-# 16. FOOTER
+# 17. FOOTER
 # ============================================================
 
 st.markdown("---")
+
 st.caption(
     "ChronosMatch HFT Terminal | AAPL | Local simulation | "
-    "Persistent SQLite engine database"
+    "Persistent SQLite engine database | "
+    "Upstox Local Simulator"
 )
