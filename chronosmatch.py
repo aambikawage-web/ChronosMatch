@@ -1,7 +1,7 @@
 
+import heapq
 import math
 
-import database
 from database import (
     create_tables,
     save_order,
@@ -14,22 +14,37 @@ from database import (
 
 
 class ChronosMatch:
-    """A simple price-time-priority order matching engine."""
+    """
+    Price-time-priority matching engine.
+
+    Buy orders:
+        Highest price first, earliest order ID first.
+
+    Sell orders:
+        Lowest price first, earliest order ID first.
+
+    Uses heaps and an order lookup dictionary to avoid
+    repeatedly sorting and scanning the complete order book.
+    """
 
     def __init__(self):
         create_tables()
 
-        self.buy_orders = []
-        self.sell_orders = []
+        self._buy_heap = []
+        self._sell_heap = []
+
+        self._active_orders = {}
         self.trades = []
 
         self.order_id = get_next_order_id()
 
+        # Restore active orders from SQLite.
         for saved_order in get_active_orders():
             order = dict(saved_order)
 
             order["id"] = int(order["id"])
             order["price"] = float(order["price"])
+
             order["remaining_quantity"] = int(
                 order.get(
                     "remaining_quantity",
@@ -37,27 +52,107 @@ class ChronosMatch:
                 )
             )
 
-            if order["side"] == "buy":
-                self.buy_orders.append(order)
-            elif order["side"] == "sell":
-                self.sell_orders.append(order)
+            if order["remaining_quantity"] <= 0:
+                continue
 
-        self._sort_orders()
+            self._active_orders[order["id"]] = order
+            self._add_to_heap(order)
 
-    def _sort_orders(self):
-        """Sort buys by highest price first and sells by lowest price first."""
-        self.buy_orders.sort(
-            key=lambda order: (-order["price"], order["id"])
+    def _add_to_heap(self, order):
+        """Add an active order to its appropriate priority heap."""
+
+        if order["side"] == "buy":
+            heapq.heappush(
+                self._buy_heap,
+                (-order["price"], order["id"]),
+            )
+
+        else:
+            heapq.heappush(
+                self._sell_heap,
+                (order["price"], order["id"]),
+            )
+
+    def _get_order(self, side, order_id):
+        """Find an order only if it is still active."""
+
+        order = self._active_orders.get(order_id)
+
+        if order is None or order["side"] != side:
+            return None
+
+        return order
+
+    def _clean_heap(self, side):
+        """Remove stale or completed entries from the heap."""
+
+        heap = (
+            self._buy_heap
+            if side == "buy"
+            else self._sell_heap
         )
-        self.sell_orders.sort(
-            key=lambda order: (order["price"], order["id"])
+
+        while heap:
+            _, order_id = heap[0]
+
+            order = self._get_order(side, order_id)
+
+            if (
+                order is not None
+                and order["remaining_quantity"] > 0
+            ):
+                break
+
+            heapq.heappop(heap)
+
+    @property
+    def buy_orders(self):
+        """Return active buy orders in price-time priority."""
+
+        orders = [
+            order
+            for order in self._active_orders.values()
+            if order["side"] == "buy"
+            and order["remaining_quantity"] > 0
+        ]
+
+        return sorted(
+            orders,
+            key=lambda order: (
+                -order["price"],
+                order["id"],
+            ),
+        )
+
+    @property
+    def sell_orders(self):
+        """Return active sell orders in price-time priority."""
+
+        orders = [
+            order
+            for order in self._active_orders.values()
+            if order["side"] == "sell"
+            and order["remaining_quantity"] > 0
+        ]
+
+        return sorted(
+            orders,
+            key=lambda order: (
+                order["price"],
+                order["id"],
+            ),
         )
 
     def submit_order(self, side, price, quantity):
-        """Validate, store and match a new order."""
+        """Validate, save and match a new order."""
 
-        if not isinstance(side, str) or side not in ("buy", "sell"):
-            raise ValueError("Side must be 'buy' or 'sell'")
+        if not isinstance(side, str) or side not in (
+            "buy",
+            "sell",
+        ):
+            raise ValueError(
+                "Side must be 'buy' or 'sell'"
+            )
 
         if (
             isinstance(price, bool)
@@ -65,14 +160,13 @@ class ChronosMatch:
         ):
             raise ValueError("Price must be a number")
 
-        if (
-            isinstance(price, float)
-            and not math.isfinite(price)
-        ):
+        if not math.isfinite(price):
             raise ValueError("Price must be finite")
 
         if price <= 0:
-            raise ValueError("Price must be greater than zero")
+            raise ValueError(
+                "Price must be greater than zero"
+            )
 
         if (
             isinstance(quantity, bool)
@@ -80,17 +174,18 @@ class ChronosMatch:
         ):
             raise ValueError("Quantity must be a number")
 
-        if (
-            isinstance(quantity, float)
-            and not math.isfinite(quantity)
-        ):
+        if not math.isfinite(quantity):
             raise ValueError("Quantity must be finite")
 
         if quantity <= 0:
-            raise ValueError("Quantity must be greater than zero")
+            raise ValueError(
+                "Quantity must be greater than zero"
+            )
 
         if int(quantity) != quantity:
-            raise ValueError("Quantity must be a whole number")
+            raise ValueError(
+                "Quantity must be a whole number"
+            )
 
         order = {
             "id": self.order_id,
@@ -100,7 +195,6 @@ class ChronosMatch:
             "remaining_quantity": int(quantity),
         }
 
-        # Persist the order using the existing database interface.
         save_order(order)
 
         self.order_id += 1
@@ -110,16 +204,24 @@ class ChronosMatch:
         else:
             self._match_sell_order(order)
 
-        # Persist remaining quantity and status.
         update_order_remaining(
             order["id"],
             order["remaining_quantity"],
         )
 
-        self._sort_orders()
+        # Only resting orders belong in the active lookup.
+        if order["remaining_quantity"] > 0:
+            self._active_orders[order["id"]] = order
+            self._add_to_heap(order)
+
         return order
 
-    def _execute_trade(self, incoming_order, resting_order, quantity):
+    def _execute_trade(
+        self,
+        incoming_order,
+        resting_order,
+        quantity,
+    ):
         """Execute a trade at the resting order's price."""
 
         trade = {
@@ -138,15 +240,30 @@ class ChronosMatch:
             resting_order["remaining_quantity"],
         )
 
-    def _match_buy_order(self, order):
-        """Match an incoming buy order against the best sell orders."""
+        # Remove completely filled resting orders.
+        if resting_order["remaining_quantity"] == 0:
+            self._active_orders.pop(
+                resting_order["id"],
+                None,
+            )
 
-        while (
-            order["remaining_quantity"] > 0
-            and self.sell_orders
-            and order["price"] >= self.sell_orders[0]["price"]
-        ):
-            resting_order = self.sell_orders[0]
+    def _match_buy_order(self, order):
+        """Match incoming buy orders against the best sell orders."""
+
+        while order["remaining_quantity"] > 0:
+
+            self._clean_heap("sell")
+
+            if not self._sell_heap:
+                break
+
+            best_price, best_id = self._sell_heap[0]
+
+            # Sell heap uses positive prices.
+            if order["price"] < best_price:
+                break
+
+            resting_order = self._active_orders[best_id]
 
             trade_quantity = min(
                 order["remaining_quantity"],
@@ -160,20 +277,26 @@ class ChronosMatch:
             )
 
             if resting_order["remaining_quantity"] == 0:
-                self.sell_orders.pop(0)
-
-        if order["remaining_quantity"] > 0:
-            self.buy_orders.append(order)
+                heapq.heappop(self._sell_heap)
 
     def _match_sell_order(self, order):
-        """Match an incoming sell order against the best buy orders."""
+        """Match incoming sell orders against the best buy orders."""
 
-        while (
-            order["remaining_quantity"] > 0
-            and self.buy_orders
-            and order["price"] <= self.buy_orders[0]["price"]
-        ):
-            resting_order = self.buy_orders[0]
+        while order["remaining_quantity"] > 0:
+
+            self._clean_heap("buy")
+
+            if not self._buy_heap:
+                break
+
+            negative_price, best_id = self._buy_heap[0]
+
+            best_price = -negative_price
+
+            if order["price"] > best_price:
+                break
+
+            resting_order = self._active_orders[best_id]
 
             trade_quantity = min(
                 order["remaining_quantity"],
@@ -187,36 +310,49 @@ class ChronosMatch:
             )
 
             if resting_order["remaining_quantity"] == 0:
-                self.buy_orders.pop(0)
-
-        if order["remaining_quantity"] > 0:
-            self.sell_orders.append(order)
+                heapq.heappop(self._buy_heap)
 
     def cancel_order(self, order_id):
-        """Cancel an active order by its ID."""
+        """Cancel an active order using its ID."""
 
-        if isinstance(order_id, bool) or not isinstance(order_id, int):
-            raise ValueError("Order ID must be an integer")
+        if (
+            isinstance(order_id, bool)
+            or not isinstance(order_id, int)
+        ):
+            raise ValueError(
+                "Order ID must be an integer"
+            )
 
-        for order_book in (self.buy_orders, self.sell_orders):
-            for order in order_book:
-                if order["id"] == order_id:
-                    if order["remaining_quantity"] <= 0:
-                        return False
+        order = self._active_orders.get(order_id)
 
-                    result = cancel_order_in_db(order_id)
+        if order is None:
+            return False
 
-                    if result is False:
-                        return False
+        if order["remaining_quantity"] <= 0:
+            return False
 
-                    order_book.remove(order)
-                    return True
+        result = cancel_order_in_db(order_id)
 
-        return False
+        if result is False:
+            return False
+
+        # Lazy deletion: remove from lookup immediately.
+        # The stale heap entry is removed when it reaches
+        # the top of its heap.
+        self._active_orders.pop(order_id, None)
+
+        return True
 
     def get_order_book(self):
-        """Return copies of the current buy and sell order books."""
+        """Return independent copies of active orders."""
+
         return {
-            "buy_orders": [dict(order) for order in self.buy_orders],
-            "sell_orders": [dict(order) for order in self.sell_orders],
+            "buy_orders": [
+                dict(order)
+                for order in self.buy_orders
+            ],
+            "sell_orders": [
+                dict(order)
+                for order in self.sell_orders
+            ],
         }
