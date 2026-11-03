@@ -58,6 +58,11 @@ def create_tables():
                 ADD COLUMN status TEXT NOT NULL DEFAULT 'HISTORICAL'
             """)
 
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_orders_active
+            ON orders(status, remaining_quantity)
+        """)
+
 
 def get_next_order_id():
     """Return the next available order ID."""
@@ -75,12 +80,8 @@ def save_order(order):
     with connect() as conn:
         conn.execute("""
             INSERT INTO orders (
-                id,
-                side,
-                price,
-                quantity,
-                remaining_quantity,
-                status
+                id, side, price, quantity,
+                remaining_quantity, status
             )
             VALUES (?, ?, ?, ?, ?, ?)
         """, (
@@ -93,9 +94,11 @@ def save_order(order):
         ))
 
 
-def update_order_remaining(order_id, remaining_quantity):
-    """Update remaining quantity and order status."""
-    with connect() as conn:
+def _update_orders_in_connection(conn, order_updates):
+    """Update multiple orders using an existing connection."""
+    rows = []
+
+    for order_id, remaining_quantity in order_updates:
         row = conn.execute("""
             SELECT quantity
             FROM orders
@@ -103,7 +106,7 @@ def update_order_remaining(order_id, remaining_quantity):
         """, (order_id,)).fetchone()
 
         if row is None:
-            return
+            continue
 
         original_quantity = row[0]
 
@@ -114,15 +117,66 @@ def update_order_remaining(order_id, remaining_quantity):
         else:
             status = "OPEN"
 
-        conn.execute("""
-            UPDATE orders
-            SET remaining_quantity = ?, status = ?
-            WHERE id = ?
-        """, (
+        rows.append((
             remaining_quantity,
             status,
             order_id,
         ))
+
+    if rows:
+        conn.executemany("""
+            UPDATE orders
+            SET remaining_quantity = ?, status = ?
+            WHERE id = ?
+        """, rows)
+
+
+def save_order_and_match(order, trades, order_updates):
+    """
+    Save an incoming order, its trades, and all affected
+    order quantities in one database transaction.
+    """
+    with connect() as conn:
+        conn.execute("""
+            INSERT INTO orders (
+                id, side, price, quantity,
+                remaining_quantity, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            order["id"],
+            order["side"],
+            order["price"],
+            order["quantity"],
+            order["quantity"],
+            "OPEN",
+        ))
+
+        if trades:
+            conn.executemany("""
+                INSERT INTO trades (price, quantity)
+                VALUES (?, ?)
+            """, [
+                (trade["price"], trade["quantity"])
+                for trade in trades
+            ])
+
+        _update_orders_in_connection(conn, order_updates)
+
+
+def update_order_remaining(order_id, remaining_quantity):
+    """Update remaining quantity and order status."""
+    with connect() as conn:
+        _update_orders_in_connection(
+            conn,
+            [(order_id, remaining_quantity)],
+        )
+
+
+def update_orders_remaining(order_updates):
+    """Update multiple orders in one transaction."""
+    with connect() as conn:
+        _update_orders_in_connection(conn, order_updates)
 
 
 def cancel_order_in_db(order_id):
@@ -149,6 +203,21 @@ def save_trade(trade):
             trade["price"],
             trade["quantity"],
         ))
+
+
+def save_trades(trades):
+    """Save multiple trades in one transaction."""
+    if not trades:
+        return
+
+    with connect() as conn:
+        conn.executemany("""
+            INSERT INTO trades (price, quantity)
+            VALUES (?, ?)
+        """, [
+            (trade["price"], trade["quantity"])
+            for trade in trades
+        ])
 
 
 def get_active_orders():
