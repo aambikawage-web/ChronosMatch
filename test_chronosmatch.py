@@ -2,6 +2,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import database
 from chronosmatch import ChronosMatch
@@ -13,7 +14,10 @@ class TestChronosMatch(unittest.TestCase):
         """Create an isolated temporary database for each test."""
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_db_name = database.DB_NAME
-        database.DB_NAME = os.path.join(self.temp_dir.name, "test.db")
+        database.DB_NAME = os.path.join(
+            self.temp_dir.name,
+            "test.db",
+        )
 
         database.create_tables()
         self.engine = ChronosMatch()
@@ -27,7 +31,7 @@ class TestChronosMatch(unittest.TestCase):
             database.DB_NAME = self.original_db_name
             self.temp_dir.cleanup()
 
-    # ---------------- ORIGINAL TESTS ----------------
+    # Original tests
 
     def test_matching_orders(self):
         self.engine.submit_order("sell", 100, 5)
@@ -54,7 +58,10 @@ class TestChronosMatch(unittest.TestCase):
         ]
 
         self.assertEqual(len(remaining_sells), 1)
-        self.assertEqual(remaining_sells[0]["remaining_quantity"], 6)
+        self.assertEqual(
+            remaining_sells[0]["remaining_quantity"],
+            6,
+        )
 
     def test_unmatched_orders(self):
         self.engine.submit_order("buy", 90, 5)
@@ -94,7 +101,13 @@ class TestChronosMatch(unittest.TestCase):
             self.engine.submit_order("invalid", 100, 5)
 
     def test_invalid_prices(self):
-        invalid_prices = (0, -1, float("inf"), float("-inf"), float("nan"))
+        invalid_prices = (
+            0,
+            -1,
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+        )
 
         for price in invalid_prices:
             with self.subTest(price=price):
@@ -129,8 +142,14 @@ class TestChronosMatch(unittest.TestCase):
             for order in database.get_all_orders()
         }
 
-        self.assertEqual(orders[first["id"]]["remaining_quantity"], 0)
-        self.assertEqual(orders[second["id"]]["remaining_quantity"], 2)
+        self.assertEqual(
+            orders[first["id"]]["remaining_quantity"],
+            0,
+        )
+        self.assertEqual(
+            orders[second["id"]]["remaining_quantity"],
+            2,
+        )
 
     def test_trade_uses_resting_order_price(self):
         self.engine.submit_order("sell", 100, 5)
@@ -147,7 +166,7 @@ class TestChronosMatch(unittest.TestCase):
         self.assertEqual(len(database.get_all_orders()), 2)
         self.assertEqual(len(database.get_all_trades()), 1)
 
-    # ---------------- 20 ADDITIONAL TESTS ----------------
+    # Additional tests
 
     def test_15_valid_buy_order_remains_open(self):
         order = self.engine.submit_order("buy", 100, 5)
@@ -247,8 +266,14 @@ class TestChronosMatch(unittest.TestCase):
             for order in database.get_all_orders()
         }
 
-        self.assertEqual(orders[first["id"]]["remaining_quantity"], 0)
-        self.assertEqual(orders[second["id"]]["remaining_quantity"], 2)
+        self.assertEqual(
+            orders[first["id"]]["remaining_quantity"],
+            0,
+        )
+        self.assertEqual(
+            orders[second["id"]]["remaining_quantity"],
+            2,
+        )
 
     def test_30_one_buy_matches_multiple_sell_orders(self):
         self.engine.submit_order("sell", 100, 2)
@@ -308,6 +333,37 @@ class TestChronosMatch(unittest.TestCase):
                 for order in book["sell_orders"]
             )
         )
+
+    def test_database_failure_restores_engine_state(self):
+        """Restore the in-memory state when database saving fails."""
+
+        resting_order = self.engine.submit_order("sell", 100, 5)
+
+        original_book = self.engine.get_order_book()
+        original_trades = list(self.engine.trades)
+        original_order_id = self.engine.order_id
+
+        with patch(
+            "chronosmatch.save_order_and_match",
+            side_effect=RuntimeError("Simulated database failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.engine.submit_order("buy", 100, 3)
+
+        self.assertEqual(
+            self.engine.get_order_book(),
+            original_book,
+        )
+        self.assertEqual(self.engine.trades, original_trades)
+        self.assertEqual(self.engine.order_id, original_order_id)
+
+        restored_order = self.engine._active_orders[
+            resting_order["id"]
+        ]
+        self.assertEqual(restored_order["remaining_quantity"], 5)
+
+        self.assertEqual(len(database.get_all_orders()), 1)
+        self.assertEqual(len(database.get_all_trades()), 0)
 
 
 if __name__ == "__main__":

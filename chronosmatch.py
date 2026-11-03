@@ -1,14 +1,13 @@
 
+import copy
 import heapq
 import math
 
 from database import (
     create_tables,
-    save_order,
-    save_trade,
+    save_order_and_match,
     get_next_order_id,
     get_active_orders,
-    update_order_remaining,
     cancel_order_in_db,
 )
 
@@ -23,8 +22,8 @@ class ChronosMatch:
     Sell orders:
         Lowest price first, earliest order ID first.
 
-    Uses heaps and an order lookup dictionary to avoid
-    repeatedly sorting and scanning the complete order book.
+    Uses heaps and an order lookup dictionary.
+    Database writes are batched per incoming order.
     """
 
     def __init__(self):
@@ -66,7 +65,6 @@ class ChronosMatch:
                 self._buy_heap,
                 (-order["price"], order["id"]),
             )
-
         else:
             heapq.heappush(
                 self._sell_heap,
@@ -94,7 +92,6 @@ class ChronosMatch:
 
         while heap:
             _, order_id = heap[0]
-
             order = self._get_order(side, order_id)
 
             if (
@@ -118,10 +115,7 @@ class ChronosMatch:
 
         return sorted(
             orders,
-            key=lambda order: (
-                -order["price"],
-                order["id"],
-            ),
+            key=lambda order: (-order["price"], order["id"]),
         )
 
     @property
@@ -137,23 +131,20 @@ class ChronosMatch:
 
         return sorted(
             orders,
-            key=lambda order: (
-                order["price"],
-                order["id"],
-            ),
+            key=lambda order: (order["price"], order["id"]),
         )
 
     def submit_order(self, side, price, quantity):
-        """Validate, save and match a new order."""
+        """Validate, match and save a new order."""
 
+        # Validate side.
         if not isinstance(side, str) or side not in (
             "buy",
             "sell",
         ):
-            raise ValueError(
-                "Side must be 'buy' or 'sell'"
-            )
+            raise ValueError("Side must be 'buy' or 'sell'")
 
+        # Validate price.
         if (
             isinstance(price, bool)
             or not isinstance(price, (int, float))
@@ -164,10 +155,9 @@ class ChronosMatch:
             raise ValueError("Price must be finite")
 
         if price <= 0:
-            raise ValueError(
-                "Price must be greater than zero"
-            )
+            raise ValueError("Price must be greater than zero")
 
+        # Validate quantity.
         if (
             isinstance(quantity, bool)
             or not isinstance(quantity, (int, float))
@@ -178,14 +168,10 @@ class ChronosMatch:
             raise ValueError("Quantity must be finite")
 
         if quantity <= 0:
-            raise ValueError(
-                "Quantity must be greater than zero"
-            )
+            raise ValueError("Quantity must be greater than zero")
 
         if int(quantity) != quantity:
-            raise ValueError(
-                "Quantity must be a whole number"
-            )
+            raise ValueError("Quantity must be a whole number")
 
         order = {
             "id": self.order_id,
@@ -195,21 +181,54 @@ class ChronosMatch:
             "remaining_quantity": int(quantity),
         }
 
-        save_order(order)
+        # Save the original in-memory state.
+        previous_buy_heap = copy.deepcopy(self._buy_heap)
+        previous_sell_heap = copy.deepcopy(self._sell_heap)
+        previous_active_orders = copy.deepcopy(
+            self._active_orders
+        )
+        previous_trades = copy.deepcopy(self.trades)
 
+        order_updates = []
+
+        try:
+            # Match the incoming order.
+            if side == "buy":
+                self._match_buy_order(order, order_updates)
+            else:
+                self._match_sell_order(order, order_updates)
+
+            # Identify trades created by this order.
+            new_trades = self.trades[len(previous_trades):]
+
+            # Include the incoming order's final quantity.
+            order_updates.append(
+                (
+                    order["id"],
+                    order["remaining_quantity"],
+                )
+            )
+
+            # Save order, trades and updates in one transaction.
+            save_order_and_match(
+                order,
+                new_trades,
+                order_updates,
+            )
+
+        except Exception:
+            # Restore the original state if database saving fails.
+            self._buy_heap = previous_buy_heap
+            self._sell_heap = previous_sell_heap
+            self._active_orders = previous_active_orders
+            self.trades = previous_trades
+
+            raise
+
+        # Update order ID only after successful database saving.
         self.order_id += 1
 
-        if side == "buy":
-            self._match_buy_order(order)
-        else:
-            self._match_sell_order(order)
-
-        update_order_remaining(
-            order["id"],
-            order["remaining_quantity"],
-        )
-
-        # Only resting orders belong in the active lookup.
+        # Add any remaining quantity to the order book.
         if order["remaining_quantity"] > 0:
             self._active_orders[order["id"]] = order
             self._add_to_heap(order)
@@ -221,6 +240,7 @@ class ChronosMatch:
         incoming_order,
         resting_order,
         quantity,
+        order_updates,
     ):
         """Execute a trade at the resting order's price."""
 
@@ -229,29 +249,29 @@ class ChronosMatch:
             "quantity": int(quantity),
         }
 
-        save_trade(trade)
         self.trades.append(trade)
 
         incoming_order["remaining_quantity"] -= quantity
         resting_order["remaining_quantity"] -= quantity
 
-        update_order_remaining(
-            resting_order["id"],
-            resting_order["remaining_quantity"],
+        order_updates.append(
+            (
+                resting_order["id"],
+                resting_order["remaining_quantity"],
+            )
         )
 
-        # Remove completely filled resting orders.
+        # Remove fully filled resting orders.
         if resting_order["remaining_quantity"] == 0:
             self._active_orders.pop(
                 resting_order["id"],
                 None,
             )
 
-    def _match_buy_order(self, order):
-        """Match incoming buy orders against the best sell orders."""
+    def _match_buy_order(self, order, order_updates):
+        """Match incoming buy orders against best sell orders."""
 
         while order["remaining_quantity"] > 0:
-
             self._clean_heap("sell")
 
             if not self._sell_heap:
@@ -259,7 +279,6 @@ class ChronosMatch:
 
             best_price, best_id = self._sell_heap[0]
 
-            # Sell heap uses positive prices.
             if order["price"] < best_price:
                 break
 
@@ -274,23 +293,22 @@ class ChronosMatch:
                 order,
                 resting_order,
                 trade_quantity,
+                order_updates,
             )
 
             if resting_order["remaining_quantity"] == 0:
                 heapq.heappop(self._sell_heap)
 
-    def _match_sell_order(self, order):
-        """Match incoming sell orders against the best buy orders."""
+    def _match_sell_order(self, order, order_updates):
+        """Match incoming sell orders against best buy orders."""
 
         while order["remaining_quantity"] > 0:
-
             self._clean_heap("buy")
 
             if not self._buy_heap:
                 break
 
             negative_price, best_id = self._buy_heap[0]
-
             best_price = -negative_price
 
             if order["price"] > best_price:
@@ -307,6 +325,7 @@ class ChronosMatch:
                 order,
                 resting_order,
                 trade_quantity,
+                order_updates,
             )
 
             if resting_order["remaining_quantity"] == 0:
@@ -319,9 +338,7 @@ class ChronosMatch:
             isinstance(order_id, bool)
             or not isinstance(order_id, int)
         ):
-            raise ValueError(
-                "Order ID must be an integer"
-            )
+            raise ValueError("Order ID must be an integer")
 
         order = self._active_orders.get(order_id)
 
@@ -336,9 +353,7 @@ class ChronosMatch:
         if result is False:
             return False
 
-        # Lazy deletion: remove from lookup immediately.
-        # The stale heap entry is removed when it reaches
-        # the top of its heap.
+        # Lazy deletion: stale heap entries are removed later.
         self._active_orders.pop(order_id, None)
 
         return True
