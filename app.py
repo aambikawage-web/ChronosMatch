@@ -569,118 +569,158 @@ st.write("")
 
 
 # ============================================================
-# 9. TERMINAL OVERVIEW
+# 9. TERMINAL OVERVIEW — LIVE REFRESH
 # ============================================================
 
 if page == "Terminal Overview":
 
-    st.subheader("Market Overview")
+    @st.fragment(run_every=2)
+    def live_terminal_overview():
+        # Reload database records every 2 seconds.
+        orders_df = orders_dataframe()
+        trades_df = trades_dataframe()
+        open_orders_df = open_orders_dataframe()
 
-    col1, col2, col3, col4 = st.columns(4)
+        total_orders = len(orders_df)
+        total_trades = len(trades_df)
+        open_orders_count = len(open_orders_df)
 
-    col1.metric(
-        "Total Orders",
-        f"{total_orders:,}",
-    )
+        total_volume = (
+            int(trades_df["Quantity"].sum())
+            if not trades_df.empty
+            else 0
+        )
 
-    col2.metric(
-        "Total Trades",
-        f"{total_trades:,}",
-    )
+        total_notional = (
+            float(trades_df["Notional"].sum())
+            if not trades_df.empty
+            else 0.0
+        )
 
-    col3.metric(
-        "Open Orders",
-        f"{open_orders_count:,}",
-    )
+        average_latency = (
+            sum(st.session_state.latency_samples)
+            / len(st.session_state.latency_samples)
+            if st.session_state.latency_samples
+            else 0.0
+        )
 
-    col4.metric(
-        "Traded Volume",
-        f"{total_volume:,}",
-    )
+        st.caption(
+            f"LIVE · Refreshes every 2 seconds · "
+            f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
+        )
 
-    st.write("")
+        st.subheader("Market Overview")
 
-    col5, col6, col7 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
 
-    col5.metric(
-        "Total Notional",
-        format_money(total_notional),
-    )
+        col1.metric(
+            "Total Orders Processed",
+            f"{total_orders:,}",
+        )
 
-    col6.metric(
-        "Average Latency",
-        f"{average_latency:.4f} ms",
-    )
+        col2.metric(
+            "Total Trades",
+            f"{total_trades:,}",
+        )
 
-    col7.metric(
-        "Submitted This Session",
-        st.session_state.submitted_count,
-    )
+        col3.metric(
+            "Open Orders",
+            f"{open_orders_count:,}",
+        )
 
-    st.divider()
+        col4.metric(
+            "Traded Volume",
+            f"{total_volume:,}",
+        )
 
-    left, right = st.columns([1.4, 1])
+        st.write("")
 
-    with left:
-        st.subheader("Recent Trades")
+        col5, col6, col7 = st.columns(3)
 
-        if trades_df.empty:
-            st.info("No trades available yet. Submit simulation orders to begin.")
+        col5.metric(
+            "Total Notional",
+            format_money(total_notional),
+        )
+
+        col6.metric(
+            "Average Latency",
+            f"{average_latency:.4f} ms",
+        )
+
+        col7.metric(
+            "Submitted This Session",
+            st.session_state.submitted_count,
+        )
+
+        st.divider()
+
+        left, right = st.columns([1.4, 1])
+
+        with left:
+            st.subheader("Recent Trades")
+
+            if trades_df.empty:
+                st.info(
+                    "No trades available yet. "
+                    "Submit simulation orders to begin."
+                )
+            else:
+                st.dataframe(
+                    trades_df.tail(10).iloc[::-1],
+                    width="stretch",
+                    hide_index=True,
+                )
+
+        with right:
+            st.subheader("Order Status")
+
+            if orders_df.empty:
+                st.info("No orders available.")
+            else:
+                status_counts = (
+                    orders_df["Status"]
+                    .astype(str)
+                    .value_counts()
+                    .reset_index()
+                )
+
+                status_counts.columns = ["Status", "Count"]
+
+                fig = px.pie(
+                    status_counts,
+                    names="Status",
+                    values="Count",
+                    hole=0.65,
+                    title="Order Distribution",
+                )
+
+                fig.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font_color="#e8eef9",
+                    margin=dict(t=50, b=10, l=10, r=10),
+                )
+
+                st.plotly_chart(
+                    fig,
+                    width="stretch",
+                )
+
+        st.divider()
+
+        st.subheader("Open Orders")
+
+        if open_orders_df.empty:
+            st.info("There are no active orders.")
         else:
             st.dataframe(
-                trades_df.tail(10).iloc[::-1],
+                open_orders_df,
                 width="stretch",
                 hide_index=True,
             )
 
-    with right:
-        st.subheader("Order Status")
-
-        if orders_df.empty:
-            st.info("No orders available.")
-        else:
-            status_counts = (
-                orders_df["Status"]
-                .astype(str)
-                .value_counts()
-                .reset_index()
-            )
-
-            status_counts.columns = ["Status", "Count"]
-
-            fig = px.pie(
-                status_counts,
-                names="Status",
-                values="Count",
-                hole=0.65,
-                title="Order Distribution",
-            )
-
-            fig.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                font_color="#e8eef9",
-                margin=dict(t=50, b=10, l=10, r=10),
-            )
-
-            st.plotly_chart(
-                fig,
-                width="stretch",
-            )
-
-    st.divider()
-
-    st.subheader("Open Orders")
-
-    if open_orders_df.empty:
-        st.info("There are no active orders.")
-    else:
-        st.dataframe(
-            open_orders_df,
-            width="stretch",
-            hide_index=True,
-        )
+    live_terminal_overview()
 
 
 # ============================================================
