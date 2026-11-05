@@ -130,6 +130,7 @@ def trades_dataframe():
     )
 
 
+# FIXED: get_active_orders() returns quantity, not remaining_quantity.
 def open_orders_dataframe():
     rows = database.get_active_orders()
     records = []
@@ -202,8 +203,7 @@ def submit_simulation_order(side, price, quantity):
 
     if price * quantity > MAX_ORDER_VALUE:
         set_message(
-            f"Order value cannot exceed "
-            f"{format_money(MAX_ORDER_VALUE)}.",
+            f"Order value cannot exceed {format_money(MAX_ORDER_VALUE)}.",
             "error",
         )
         return
@@ -224,8 +224,7 @@ def submit_simulation_order(side, price, quantity):
         st.session_state.submitted_count += 1
 
         set_message(
-            f"{side} order submitted successfully. "
-            f"Order ID: {order}",
+            f"{side} order submitted successfully. Order ID: {order}",
             "success",
         )
 
@@ -236,26 +235,27 @@ def submit_simulation_order(side, price, quantity):
         )
 
 
+
 # ============================================================
-# 5. DASHBOARD STYLING
+# 5. CYBERPUNK NEON DASHBOARD STYLING
 # ============================================================
 
 st.markdown(
     """
     <style>
-    @import url(
-        'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap'
-    );
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
 
     :root {
-        --background: #080d19;
-        --surface: #111a2b;
-        --surface-light: #172338;
-        --border: rgba(148, 163, 184, 0.16);
-        --text: #e8eef9;
-        --muted: #94a3b8;
-        --cyan: #22d3ee;
-        --blue: #6366f1;
+        --bg: #050807;
+        --panel: #0b1210;
+        --panel2: #101b17;
+        --neon: #39ff14;
+        --cyan: #00f5ff;
+        --purple: #b026ff;
+        --red: #ff3155;
+        --text: #e7fff0;
+        --muted: #83a394;
+        --border: rgba(57,255,20,0.22);
     }
 
     html, body, [class*="css"] {
@@ -264,30 +264,21 @@ st.markdown(
 
     .stApp {
         background:
-            radial-gradient(
-                circle at 10% 0%,
-                rgba(34, 211, 238, 0.09),
-                transparent 30%
-            ),
-            radial-gradient(
-                circle at 90% 10%,
-                rgba(99, 102, 241, 0.10),
-                transparent 30%
-            ),
-            var(--background);
+            linear-gradient(rgba(57,255,20,0.025) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(57,255,20,0.025) 1px, transparent 1px),
+            radial-gradient(ellipse at 10% 0%, #10251a 0%, transparent 35%),
+            radial-gradient(ellipse at 90% 10%, #101a2d 0%, transparent 35%),
+            #050807;
+        background-size: 35px 35px, 35px 35px, auto, auto, auto;
         color: var(--text);
     }
 
     [data-testid="stHeader"] {
-        background: rgba(8, 13, 25, 0.85);
+        background: rgba(5,8,7,0.95);
     }
 
     [data-testid="stSidebar"] {
-        background: linear-gradient(
-            180deg,
-            #101a2d 0%,
-            #0b1220 100%
-        );
+        background: linear-gradient(180deg, #0a1510, #050807);
         border-right: 1px solid var(--border);
     }
 
@@ -296,163 +287,169 @@ st.markdown(
     }
 
     [data-testid="stSidebar"] .stRadio label {
-        color: #cbd5e1;
-        font-weight: 500;
+        color: #b9d8c5;
+        font-weight: 600;
+        padding: 5px 0;
+        transition: 0.2s;
     }
 
     [data-testid="stSidebar"] .stRadio label:hover {
-        color: var(--cyan);
+        color: var(--neon);
     }
 
     .main .block-container {
-        max-width: 1500px;
+        max-width: 1550px;
         padding-top: 2rem;
         padding-bottom: 3rem;
     }
 
     h1, h2, h3 {
-        color: #f1f5f9 !important;
-        font-weight: 700 !important;
-        letter-spacing: -0.5px;
+        color: var(--neon) !important;
+        font-family: 'Orbitron', sans-serif !important;
+        letter-spacing: 0.5px;
     }
 
     p, label, span {
-        color: #cbd5e1;
+        color: #c3ddce;
     }
 
     [data-testid="stMetric"] {
-        background: linear-gradient(
-            145deg,
-            rgba(23, 35, 56, 0.96),
-            rgba(15, 25, 42, 0.96)
-        );
-        border: 1px solid var(--border);
-        border-radius: 15px;
+        background: linear-gradient(145deg, #101c16, #09100d);
+        border: 1px solid rgba(57,255,20,0.28);
+        border-radius: 12px;
         padding: 20px;
-        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.18);
-        transition: transform 0.2s ease, border-color 0.2s ease;
+        box-shadow: 0 0 12px rgba(57,255,20,0.06);
+        transition: all 0.25s ease;
     }
 
     [data-testid="stMetric"]:hover {
+        border-color: var(--neon);
+        box-shadow: 0 0 18px rgba(57,255,20,0.22);
         transform: translateY(-3px);
-        border-color: rgba(34, 211, 238, 0.45);
     }
 
     [data-testid="stMetricLabel"] {
-        color: #94a3b8 !important;
-        font-size: 0.85rem !important;
+        color: #8eae9b !important;
+        font-size: 0.8rem !important;
+        text-transform: uppercase;
+        letter-spacing: 1px;
     }
 
     [data-testid="stMetricValue"] {
-        color: #f8fafc !important;
+        color: var(--neon) !important;
         font-weight: 800 !important;
+        text-shadow: 0 0 10px rgba(57,255,20,0.2);
     }
 
-    [data-testid="stMetricDelta"] {
-        font-size: 0.8rem;
-    }
-
-    div.stButton > button {
-        background: linear-gradient(
-            100deg,
-            #0891b2,
-            #4f46e5
-        );
-        color: white;
-        border: none;
-        border-radius: 9px;
-        padding: 0.55rem 1.2rem;
-        font-weight: 600;
+    div.stButton > button,
+    div.stFormSubmitButton > button {
+        background: linear-gradient(100deg, #123c20, #087d46);
+        color: #ffffff;
+        border: 1px solid var(--neon);
+        border-radius: 7px;
+        font-weight: 700;
         transition: all 0.2s ease;
     }
 
-    div.stButton > button:hover {
-        border: none;
+    div.stButton > button:hover,
+    div.stFormSubmitButton > button:hover {
+        background: #39ff14;
+        color: #050807;
+        box-shadow: 0 0 18px rgba(57,255,20,0.5);
         transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(34, 211, 238, 0.2);
+        border-color: var(--neon);
     }
 
     div[data-testid="stForm"] {
-        background: rgba(17, 26, 43, 0.85);
+        background: rgba(11,18,16,0.95);
         border: 1px solid var(--border);
-        border-radius: 14px;
+        border-radius: 12px;
         padding: 20px;
+        box-shadow: 0 0 18px rgba(0,0,0,0.3);
     }
 
     div[data-testid="stDataFrame"] {
         border: 1px solid var(--border);
-        border-radius: 12px;
+        border-radius: 10px;
         overflow: hidden;
     }
 
     div[data-testid="stPlotlyChart"] {
-        background: rgba(17, 26, 43, 0.65);
+        background: #0b1210;
         border: 1px solid var(--border);
-        border-radius: 14px;
+        border-radius: 12px;
         padding: 8px;
     }
 
     div[data-testid="stAlert"] {
-        border-radius: 10px;
+        border-radius: 9px;
+        border: 1px solid var(--border);
     }
 
     input, textarea {
-        background-color: #111a2b !important;
-        color: #e8eef9 !important;
+        background-color: #0b1510 !important;
+        color: #e7fff0 !important;
+        border-color: rgba(57,255,20,0.3) !important;
     }
 
     [data-baseweb="select"] > div {
-        background-color: #111a2b;
-        border-color: var(--border);
+        background-color: #0b1510;
+        border-color: rgba(57,255,20,0.3);
     }
 
     hr {
-        border-color: var(--border);
+        border-color: rgba(57,255,20,0.2);
     }
 
     .terminal-title {
-        font-size: 2.1rem;
+        font-family: 'Orbitron', sans-serif;
+        font-size: 2.2rem;
         font-weight: 800;
-        color: #f8fafc;
-        letter-spacing: -1px;
+        color: var(--neon);
+        letter-spacing: 1px;
+        text-shadow: 0 0 12px rgba(57,255,20,0.45);
     }
 
     .terminal-subtitle {
-        color: #94a3b8;
-        font-size: 0.95rem;
-        margin-top: -8px;
+        color: #8eae9b;
+        font-size: 0.9rem;
+        letter-spacing: 1px;
+        margin-top: -5px;
     }
 
     .status-pill {
         display: inline-block;
-        background: rgba(34, 197, 94, 0.12);
-        color: #4ade80;
-        border: 1px solid rgba(34, 197, 94, 0.25);
-        padding: 5px 12px;
-        border-radius: 30px;
-        font-size: 0.78rem;
-        font-weight: 700;
+        background: rgba(57,255,20,0.09);
+        color: var(--neon);
+        border: 1px solid rgba(57,255,20,0.5);
+        padding: 6px 13px;
+        border-radius: 5px;
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 1px;
+        box-shadow: 0 0 10px rgba(57,255,20,0.12);
     }
 
-    @keyframes cmFadeUp {
-        from {
-            opacity: 0;
-            transform: translateY(8px);
-        }
-        to {
-            opacity: 1;
-            transform: translateY(0);
-        }
+    .cyber-label {
+        color: var(--cyan);
+        font-family: 'Orbitron', sans-serif;
+        letter-spacing: 2px;
+        font-size: 0.75rem;
     }
 
-    .block-container {
-        animation: cmFadeUp 0.45s ease-out;
+    @keyframes cyberGlow {
+        0%, 100% { text-shadow: 0 0 5px #39ff14; }
+        50% { text-shadow: 0 0 16px #39ff14; }
+    }
+
+    .terminal-title {
+        animation: cyberGlow 3s infinite;
     }
 
     @media (prefers-reduced-motion: reduce) {
         *, *::before, *::after {
-            animation-duration: 0.01ms !important;
-            transition-duration: 0.01ms !important;
+            animation: none !important;
+            transition: none !important;
         }
     }
     </style>
@@ -461,27 +458,42 @@ st.markdown(
 )
 
 
+
 # ============================================================
-# 6. SIDEBAR NAVIGATION
+# 6. CYBERPUNK SIDEBAR NAVIGATION
 # ============================================================
 
 with st.sidebar:
+
     st.markdown(
         """
         <div style="padding: 8px 4px 22px 4px;">
             <div style="
-                font-size: 1.55rem;
+                font-family: Orbitron, sans-serif;
+                font-size: 1.45rem;
                 font-weight: 800;
-                color: #f8fafc;
+                color: #39ff14;
+                text-shadow: 0 0 12px rgba(57,255,20,0.6);
             ">
-                ⚡ ChronosMatch
+                ⚡ CHRONOS
             </div>
+
             <div style="
-                color: #94a3b8;
-                font-size: 0.78rem;
-                margin-top: 4px;
+                font-family: Orbitron, sans-serif;
+                color: #00f5ff;
+                font-size: 0.72rem;
+                margin-top: 7px;
+                letter-spacing: 2px;
             ">
-                HIGH FREQUENCY TRADING ENGINE
+                MATCH ENGINE
+            </div>
+
+            <div style="
+                color: #83a394;
+                font-size: 0.68rem;
+                margin-top: 5px;
+            ">
+                HIGH FREQUENCY TRADING SYSTEM
             </div>
         </div>
         """,
@@ -494,6 +506,11 @@ with st.sidebar:
     )
 
     st.divider()
+
+    st.markdown(
+        '<div class="cyber-label">◈ CONTROL CENTER</div>',
+        unsafe_allow_html=True,
+    )
 
     page = st.radio(
         "NAVIGATION",
@@ -508,13 +525,34 @@ with st.sidebar:
             "Paper Trading",
             "Upstox Simulator",
         ],
-        label_visibility="visible",
+        label_visibility="collapsed",
     )
 
     st.divider()
 
-    st.caption("ChronosMatch • Local Simulation")
-    st.caption(f"Updated: {datetime.now().strftime('%d %b %Y, %H:%M:%S')}")
+    st.markdown(
+        """
+        <div style="
+            color: #83a394;
+            font-size: 0.72rem;
+            line-height: 1.8;
+        ">
+            <span style="color:#39ff14;">●</span> LOCAL ENGINE ACTIVE
+            <br>
+            <span style="color:#00f5ff;">◈</span> SIMULATION MODE
+            <br>
+            <span style="color:#b026ff;">◆</span> CHRONOSMATCH v1.0
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
+
+    st.caption(
+        f"LAST UPDATE: {datetime.now().strftime('%d %b %Y, %H:%M:%S')}"
+    )
+
 
 
 # ============================================================
@@ -576,7 +614,7 @@ if page == "Terminal Overview":
 
     @st.fragment(run_every=2)
     def live_terminal_overview():
-        # Reload database records every 2 seconds.
+
         orders_df = orders_dataframe()
         trades_df = trades_dataframe()
         open_orders_df = open_orders_dataframe()
@@ -604,6 +642,24 @@ if page == "Terminal Overview":
             else 0.0
         )
 
+        buy_orders_count = (
+            int((orders_df["Side"] == "BUY").sum())
+            if not orders_df.empty
+            else 0
+        )
+
+        sell_orders_count = (
+            int((orders_df["Side"] == "SELL").sum())
+            if not orders_df.empty
+            else 0
+        )
+
+        average_execution_price = (
+            total_notional / total_volume
+            if total_volume > 0
+            else 0.0
+        )
+
         st.caption(
             f"LIVE · Refreshes every 2 seconds · "
             f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
@@ -613,44 +669,32 @@ if page == "Terminal Overview":
 
         col1, col2, col3, col4 = st.columns(4)
 
-        col1.metric(
-            "Total Orders Processed",
-            f"{total_orders:,}",
-        )
+        col1.metric("Total Orders Processed", f"{total_orders:,}")
+        col2.metric("Total Trades", f"{total_trades:,}")
+        col3.metric("Open Orders", f"{open_orders_count:,}")
+        col4.metric("Traded Volume", f"{total_volume:,}")
 
-        col2.metric(
-            "Total Trades",
-            f"{total_trades:,}",
-        )
+        st.write("")
 
-        col3.metric(
-            "Open Orders",
-            f"{open_orders_count:,}",
-        )
+        col5, col6, col7, col8 = st.columns(4)
 
-        col4.metric(
-            "Traded Volume",
-            f"{total_volume:,}",
+        col5.metric("Total Notional", format_money(total_notional))
+        col6.metric(
+            "Average Execution Price",
+            format_money(average_execution_price),
+        )
+        col7.metric("Average Latency", f"{average_latency:.4f} ms")
+        col8.metric(
+            "Submitted This Session",
+            st.session_state.submitted_count,
         )
 
         st.write("")
 
-        col5, col6, col7 = st.columns(3)
+        col9, col10 = st.columns(2)
 
-        col5.metric(
-            "Total Notional",
-            format_money(total_notional),
-        )
-
-        col6.metric(
-            "Average Latency",
-            f"{average_latency:.4f} ms",
-        )
-
-        col7.metric(
-            "Submitted This Session",
-            st.session_state.submitted_count,
-        )
+        col9.metric("Total Buy Orders", f"{buy_orders_count:,}")
+        col10.metric("Total Sell Orders", f"{sell_orders_count:,}")
 
         st.divider()
 
@@ -702,10 +746,7 @@ if page == "Terminal Overview":
                     margin=dict(t=50, b=10, l=10, r=10),
                 )
 
-                st.plotly_chart(
-                    fig,
-                    width="stretch",
-                )
+                st.plotly_chart(fig, width="stretch")
 
         st.divider()
 
@@ -741,10 +782,7 @@ elif page == "Order Entry":
     with left:
         with st.form("order_entry_form"):
 
-            side = st.selectbox(
-                "Order Side",
-                ["BUY", "SELL"],
-            )
+            side = st.selectbox("Order Side", ["BUY", "SELL"])
 
             symbol = st.text_input(
                 "Symbol",
@@ -976,10 +1014,7 @@ elif page == "Trade History":
     if not trades_df.empty:
         a, b, c = st.columns(3)
 
-        a.metric(
-            "Number of Trades",
-            len(trades_df),
-        )
+        a.metric("Number of Trades", len(trades_df))
 
         b.metric(
             "Average Trade Price",
@@ -1004,10 +1039,7 @@ elif page == "Performance Lab":
 
     col1, col2, col3 = st.columns(3)
 
-    col1.metric(
-        "Samples",
-        len(latency_values),
-    )
+    col1.metric("Samples", len(latency_values))
 
     col2.metric(
         "Average Latency",
@@ -1043,10 +1075,7 @@ elif page == "Performance Lab":
             plot_bgcolor="rgba(0,0,0,0)",
         )
 
-        st.plotly_chart(
-            fig,
-            width="stretch",
-        )
+        st.plotly_chart(fig, width="stretch")
 
     else:
         st.info(
@@ -1072,20 +1101,14 @@ elif page == "Risk Monitor":
 
     col1, col2, col3 = st.columns(3)
 
-    col1.metric(
-        "Maximum Quantity",
-        MAX_ORDER_QUANTITY,
-    )
+    col1.metric("Maximum Quantity", MAX_ORDER_QUANTITY)
 
     col2.metric(
         "Maximum Order Value",
         format_money(MAX_ORDER_VALUE),
     )
 
-    col3.metric(
-        "Current Open Orders",
-        open_orders_count,
-    )
+    col3.metric("Current Open Orders", open_orders_count)
 
     st.divider()
 
@@ -1113,9 +1136,7 @@ elif page == "Risk Monitor":
             hide_index=True,
         )
 
-        total_exposure = exposure_df[
-            "Order Value"
-        ].sum()
+        total_exposure = exposure_df["Order Value"].sum()
 
         st.metric(
             "Total Submitted Order Value",
@@ -1173,10 +1194,7 @@ elif page == "Backtesting":
             plot_bgcolor="rgba(0,0,0,0)",
         )
 
-        st.plotly_chart(
-            fig,
-            width="stretch",
-        )
+        st.plotly_chart(fig, width="stretch")
 
         st.dataframe(
             backtest_df,
@@ -1214,15 +1232,9 @@ elif page == "Paper Trading":
             format_money(balance),
         )
 
-        c2.metric(
-            "Open Positions",
-            len(positions),
-        )
+        c2.metric("Open Positions", len(positions))
 
-        c3.metric(
-            "Paper Orders",
-            len(paper_orders),
-        )
+        c3.metric("Paper Orders", len(paper_orders))
 
         st.divider()
 
@@ -1301,9 +1313,7 @@ elif page == "Paper Trading":
             st.info("No paper orders available.")
 
     except Exception as exc:
-        st.error(
-            f"Paper trading module error: {exc}"
-        )
+        st.error(f"Paper trading module error: {exc}")
 
 
 # ============================================================
@@ -1367,9 +1377,7 @@ elif page == "Upstox Simulator":
                 )
 
             except Exception as exc:
-                st.error(
-                    f"Local order failed: {exc}"
-                )
+                st.error(f"Local order failed: {exc}")
 
     st.divider()
 
@@ -1382,10 +1390,7 @@ elif page == "Upstox Simulator":
         if order.get("status") == "OPEN"
     ]
 
-    st.metric(
-        "Open Local Orders",
-        len(open_local_orders),
-    )
+    st.metric("Open Local Orders", len(open_local_orders))
 
     if local_orders:
         st.dataframe(
@@ -1437,16 +1442,12 @@ elif page == "Upstox Simulator":
                                 price=float(new_price),
                             )
 
-                            st.success(
-                                f"Order modified: {result}"
-                            )
+                            st.success(f"Order modified: {result}")
 
                             st.rerun()
 
                         except Exception as exc:
-                            st.error(
-                                f"Modification failed: {exc}"
-                            )
+                            st.error(f"Modification failed: {exc}")
 
             with cancel_col:
                 st.write("")
@@ -1460,16 +1461,12 @@ elif page == "Upstox Simulator":
                             selected_order
                         )
 
-                        st.success(
-                            f"Order cancelled: {result}"
-                        )
+                        st.success(f"Order cancelled: {result}")
 
                         st.rerun()
 
                     except Exception as exc:
-                        st.error(
-                            f"Cancellation failed: {exc}"
-                        )
+                        st.error(f"Cancellation failed: {exc}")
 
         else:
             st.info("There are no open local orders.")
